@@ -25,11 +25,15 @@ logger = logging.getLogger(__name__)
 class VacancyMonitor:
     def __init__(self, bot: Bot):
         self.bot = bot
-        session_path = str(Path(DB_PATH).parent / "pyrogram_session")
+        session_dir = Path(DB_PATH).parent
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = str(session_dir / "pyrogram_session")
+        logger.info(f"[INIT] Session path: {session_path}")
         self.client = Client(
-            session_path,
+            name=session_path,
             api_id=API_ID,
             api_hash=API_HASH,
+            workdir=str(session_dir),
         )
         self._resolved_chats: dict[str, int] = {}
         self._phone_code_hash: str = ""
