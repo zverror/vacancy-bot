@@ -62,11 +62,23 @@ class VacancyMonitor:
 
         try:
             sent = await self.client.send_code_request(PHONE)
-            logger.info(f"Код авторизации отправлен на {PHONE}")
+            code_type = type(sent.type).__name__
+            logger.info(f"Код авторизации отправлен на {PHONE}, тип: {code_type}")
+
+            type_desc = {
+                "SentCodeTypeApp": "📱 Код отправлен в приложение Telegram (чат «Telegram»)",
+                "SentCodeTypeSms": "📩 Код отправлен по SMS",
+                "SentCodeTypeCall": "📞 Код придёт звонком",
+                "SentCodeTypeFlashCall": "📞 Код = последние цифры входящего номера",
+                "SentCodeTypeMissedCall": "📞 Код = последние цифры пропущенного звонка",
+                "SentCodeTypeFragmentSms": "📩 Код отправлен через Fragment SMS",
+                "SentCodeTypeEmailCode": "📧 Код отправлен на email",
+            }.get(code_type, f"❓ Неизвестный тип: {code_type}")
 
             await self._notify_admins(
                 "🔐 <b>Требуется авторизация Telethon</b>\n\n"
-                f"Код отправлен на номер {PHONE}.\n"
+                f"Номер: {PHONE}\n"
+                f"{type_desc}\n\n"
                 "Введите код командой:\n"
                 "<code>/code 12345</code>\n\n"
                 "Если потребуется пароль 2FA:\n"
