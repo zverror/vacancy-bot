@@ -4,21 +4,22 @@ import logging
 import sys
 from pathlib import Path
 
-# Добавляем корень проекта в PATH
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from bot.config import BOT_TOKEN, LOG_LEVEL
 from bot.database import init_db
 from bot.monitor.userbot import VacancyMonitor
 
+# Хендлеры
 from bot.handlers import start, profile, subscription, admin, help
 
 
 def setup_logging():
+    log_dir = Path("data")
+    log_dir.mkdir(exist_ok=True)
+
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL, logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -33,39 +34,40 @@ async def main():
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # Создаём директорию для данных
-    Path("data").mkdir(exist_ok=True)
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN не задан в .env!")
+        sys.exit(1)
+
+    logger.info("Инициализация бота...")
 
     # Инициализация БД
     await init_db()
-    logger.info("База данных инициализирована")
+    logger.info("БД инициализирована")
 
-    # Бот
+    # Создание бота
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
 
+    # Диспетчер
     dp = Dispatcher()
-
-    # Регистрация роутеров
     dp.include_router(start.router)
     dp.include_router(profile.router)
     dp.include_router(subscription.router)
     dp.include_router(admin.router)
     dp.include_router(help.router)
 
-    # Мониторинг чатов
+    # Мониторинг чатов (Telethon)
     monitor = VacancyMonitor(bot)
 
     try:
-        # Запускаем мониторинг
+        # Запускаем мониторинг параллельно с ботом
         await monitor.start()
-        logger.info("Мониторинг чатов запущен")
+        logger.info("Бот запущен!")
 
-        # Запускаем бота
-        logger.info("Бот запущен")
-        await dp.start_polling(bot)
+        # Запускаем polling
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except KeyboardInterrupt:
         logger.info("Остановка по Ctrl+C")
     finally:

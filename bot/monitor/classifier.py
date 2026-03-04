@@ -13,9 +13,7 @@ def classify_vacancy(text: str) -> list[str]:
 
     for profession, keywords in PROFESSIONS.items():
         for kw in keywords:
-            # Ищем ключевое слово как отдельное слово/фразу
-            pattern = re.escape(kw.lower())
-            if re.search(r'(?:^|\s|[^\w])' + pattern + r'(?:\s|[^\w]|$)', text_lower):
+            if kw.lower() in text_lower:
                 matched.append(profession)
                 break
 
