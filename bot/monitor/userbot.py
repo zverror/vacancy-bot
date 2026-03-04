@@ -14,7 +14,7 @@ from pyrogram.errors import (
 )
 from aiogram import Bot
 
-from bot.config import API_ID, API_HASH, PHONE, SOURCE_CHATS, ADMIN_IDS, DB_PATH
+from bot.config import API_ID, API_HASH, PHONE, ADMIN_IDS, DB_PATH
 from bot import database as db
 from bot.monitor.classifier import classify_vacancy, is_vacancy
 from pathlib import Path
@@ -139,9 +139,44 @@ class VacancyMonitor:
             logger.error(f"Ошибка 2FA: {e}", exc_info=True)
             return f"❌ Ошибка: <code>{e}</code>"
 
+    async def reload_sources(self):
+        """Перезагрузить источники из БД и переподключиться"""
+        if not self._authorized:
+            return "❌ Мониторинг не авторизован"
+        self._resolved_chats.clear()
+        await self._setup_monitoring()
+        return f"✅ Переподключено чатов: {len(self._resolved_chats)}"
+
+    async def fetch_recent_from_sources(self, limit: int = 10) -> list[dict]:
+        """Получить последние сообщения из чатов-источников через Pyrogram"""
+        results = []
+        for chat_ref, chat_id in self._resolved_chats.items():
+            try:
+                async for msg in self.client.get_chat_history(chat_id, limit=limit):
+                    text = msg.text or msg.caption or ""
+                    if text:
+                        results.append({
+                            "source": chat_ref,
+                            "text": text[:500],
+                            "date": msg.date.strftime("%d.%m %H:%M") if msg.date else "",
+                            "is_vacancy": is_vacancy(text),
+                            "professions": classify_vacancy(text),
+                        })
+            except Exception as e:
+                logger.warning(f"Ошибка получения истории {chat_ref}: {e}")
+        results.sort(key=lambda x: x.get("date", ""), reverse=True)
+        return results[:limit]
+
     async def _setup_monitoring(self):
         """Настройка мониторинга после авторизации"""
-        await self._resolve_chats()
+        source_chats = await db.get_sources()
+        if not source_chats:
+            logger.warning("Нет источников в БД!")
+            await self._notify_admins("⚠️ Нет источников! Добавьте через /add_source")
+            return
+
+        for chat_ref in source_chats:
+            await self._resolve_chat(chat_ref)
 
         if not self._resolved_chats:
             logger.error("Не удалось подключиться ни к одному чату!")
@@ -161,25 +196,22 @@ class VacancyMonitor:
             f"Чаты ({len(chat_ids)}): {', '.join(chat_names)}"
         )
 
-    async def _resolve_chats(self):
-        """Подключаемся к чатам-источникам"""
-        for chat_ref in SOURCE_CHATS:
-            try:
-                if chat_ref.startswith("+"):
-                    # Invite link hash
-                    try:
-                        chat = await self.client.join_chat(chat_ref)
-                        self._resolved_chats[chat_ref] = chat.id
-                        logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
-                    except Exception as e:
-                        # Может уже участник
-                        logger.warning(f"Чат {chat_ref}: join ошибка — {e}")
-                else:
-                    chat = await self.client.get_chat(chat_ref)
+    async def _resolve_chat(self, chat_ref: str):
+        """Подключаемся к одному чату"""
+        try:
+            if chat_ref.startswith("+"):
+                try:
+                    chat = await self.client.join_chat(chat_ref)
                     self._resolved_chats[chat_ref] = chat.id
                     logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
-            except Exception as e:
-                logger.error(f"Чат {chat_ref}: не удалось подключиться — {e}")
+                except Exception as e:
+                    logger.warning(f"Чат {chat_ref}: join ошибка — {e}")
+            else:
+                chat = await self.client.get_chat(chat_ref)
+                self._resolved_chats[chat_ref] = chat.id
+                logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
+        except Exception as e:
+            logger.error(f"Чат {chat_ref}: не удалось подключиться — {e}")
 
     async def _handle_message(self, message):
         """Обработка нового сообщения"""

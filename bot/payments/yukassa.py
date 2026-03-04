@@ -4,8 +4,9 @@ import hashlib
 from aiohttp import web
 from aiogram import Bot
 
-from bot.config import YUKASSA_SECRET_KEY, PLANS
+from bot.config import YUKASSA_SECRET_KEY
 from bot import database as db
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,8 @@ async def yumoney_webhook(request: web.Request) -> web.Response:
 
         _, user_id_str, plan_id = parts
         user_id = int(user_id_str)
-        plan = PLANS.get(plan_id)
+        plans = await db.get_plans()
+        plan = plans.get(plan_id)
 
         if not plan:
             logger.warning(f"ЮМани: неизвестный тариф: {plan_id}")

@@ -79,11 +79,4 @@ PROFESSIONS = {
     ],
 }
 
-# Тарифы подписки
-PLANS = {
-    "week": {"name": "Неделя", "price": 740, "days": 7, "stars": 120},
-    "month": {"name": "Месяц", "price": 1290, "days": 30, "stars": 210},
-    "quarter": {"name": "3 месяца", "price": 2890, "days": 90, "stars": 470},
-}
-
 TRIAL_DAYS = 7

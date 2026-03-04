@@ -7,18 +7,28 @@ from aiogram.types import (
     LabeledPrice, PreCheckoutQuery
 )
 from bot import database as db
-from bot.config import PLANS, YUKASSA_SHOP_ID
+from bot.config import YUKASSA_SHOP_ID
 from urllib.parse import quote
-import os
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+# Кэш username бота (заполняется при первом вызове)
+_bot_username: str = ""
 
-def _subscribe_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора тарифа"""
+
+async def _get_bot_username(bot) -> str:
+    global _bot_username
+    if not _bot_username:
+        me = await bot.get_me()
+        _bot_username = me.username
+    return _bot_username
+
+
+async def _subscribe_keyboard() -> InlineKeyboardMarkup:
+    plans = await db.get_plans()
     buttons = []
-    for plan_id, plan in PLANS.items():
+    for plan_id, plan in plans.items():
         buttons.append([InlineKeyboardButton(
             text=f"{plan['name']} — {plan['price']}₽ ({plan['stars']}⭐)",
             callback_data=f"sub:{plan_id}"
@@ -27,13 +37,12 @@ def _subscribe_keyboard() -> InlineKeyboardMarkup:
 
 
 def _payment_method_keyboard(plan_id: str) -> InlineKeyboardMarkup:
-    """Выбор способа оплаты"""
     buttons = [
         [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data=f"pay:stars:{plan_id}")],
     ]
     if YUKASSA_SHOP_ID:
         buttons.append([
-            InlineKeyboardButton(text="💳 Банковская карта (ЮKassa)", callback_data=f"pay:yukassa:{plan_id}")
+            InlineKeyboardButton(text="💳 Банковская карта", callback_data=f"pay:yukassa:{plan_id}")
         ])
     buttons.append([InlineKeyboardButton(text="← Назад", callback_data="sub:back")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -42,15 +51,16 @@ def _payment_method_keyboard(plan_id: str) -> InlineKeyboardMarkup:
 @router.message(Command("subscribe"))
 @router.message(F.text == "💎 Подписка")
 async def cmd_subscribe(message: Message):
+    plans = await db.get_plans()
     await message.answer(
         "💎 <b>Тарифы подписки</b>\n\n"
         "🎁 Пробный период: 7 дней бесплатно\n\n"
         "После пробного периода:\n"
-        f"• Неделя — {PLANS['week']['price']}₽\n"
-        f"• Месяц — {PLANS['month']['price']}₽\n"
-        f"• 3 месяца — {PLANS['quarter']['price']}₽\n\n"
+        f"• {plans['week']['name']} — {plans['week']['price']}₽\n"
+        f"• {plans['month']['name']} — {plans['month']['price']}₽\n"
+        f"• {plans['quarter']['name']} — {plans['quarter']['price']}₽\n\n"
         "Выберите тариф:",
-        reply_markup=_subscribe_keyboard(),
+        reply_markup=await _subscribe_keyboard(),
         parse_mode="HTML"
     )
 
@@ -59,7 +69,7 @@ async def cmd_subscribe(message: Message):
 async def on_sub_back(callback: CallbackQuery):
     await callback.message.edit_text(
         "💎 <b>Тарифы подписки</b>\n\nВыберите тариф:",
-        reply_markup=_subscribe_keyboard(),
+        reply_markup=await _subscribe_keyboard(),
         parse_mode="HTML"
     )
 
@@ -67,11 +77,12 @@ async def on_sub_back(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("sub:"))
 async def on_plan_select(callback: CallbackQuery):
     plan_id = callback.data.replace("sub:", "")
-    if plan_id not in PLANS:
+    plans = await db.get_plans()
+    if plan_id not in plans:
         await callback.answer("Неизвестный тариф", show_alert=True)
         return
 
-    plan = PLANS[plan_id]
+    plan = plans[plan_id]
     await callback.message.edit_text(
         f"💎 <b>{plan['name']}</b> — {plan['price']}₽\n\n"
         "Выберите способ оплаты:",
@@ -85,7 +96,8 @@ async def on_plan_select(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("pay:stars:"))
 async def on_pay_stars(callback: CallbackQuery):
     plan_id = callback.data.replace("pay:stars:", "")
-    plan = PLANS.get(plan_id)
+    plans = await db.get_plans()
+    plan = plans.get(plan_id)
     if not plan:
         await callback.answer("Ошибка", show_alert=True)
         return
@@ -109,7 +121,8 @@ async def on_pre_checkout(query: PreCheckoutQuery):
 async def on_successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
     plan_id = payload.replace("sub:", "")
-    plan = PLANS.get(plan_id)
+    plans = await db.get_plans()
+    plan = plans.get(plan_id)
     if not plan:
         await message.answer("Ошибка обработки платежа. Обратитесь к администратору.")
         return
@@ -117,34 +130,28 @@ async def on_successful_payment(message: Message):
     uid = message.from_user.id
     await db.extend_subscription(uid, plan["days"])
     await db.add_payment(
-        user_id=uid,
-        plan=plan_id,
-        amount=plan["price"],
+        user_id=uid, plan=plan_id, amount=plan["price"],
         method="stars",
         payment_id=str(message.successful_payment.telegram_payment_charge_id)
     )
-
-    logger.info(f"Оплата Stars: user={uid}, plan={plan_id}, amount={plan['stars']} stars")
+    logger.info(f"Оплата Stars: user={uid}, plan={plan_id}")
     await message.answer(
-        f"✅ Оплата прошла успешно!\n\n"
-        f"Подписка «{plan['name']}» активирована на {plan['days']} дней.\n"
-        f"Спасибо! 🎉"
+        f"✅ Оплата прошла!\n\n"
+        f"Подписка «{plan['name']}» активирована на {plan['days']} дней. 🎉"
     )
 
 
-# --- ЮKassa (заглушка, активируется при наличии ключей) ---
+# --- ЮМани ---
 
 @router.callback_query(F.data.startswith("pay:yukassa:"))
 async def on_pay_yukassa(callback: CallbackQuery):
     if not YUKASSA_SHOP_ID:
-        await callback.answer(
-            "Оплата картой временно недоступна. Используйте Telegram Stars.",
-            show_alert=True
-        )
+        await callback.answer("Оплата картой временно недоступна.", show_alert=True)
         return
 
     plan_id = callback.data.replace("pay:yukassa:", "")
-    plan = PLANS.get(plan_id)
+    plans = await db.get_plans()
+    plan = plans.get(plan_id)
     if not plan:
         await callback.answer("Ошибка", show_alert=True)
         return
@@ -152,7 +159,10 @@ async def on_pay_yukassa(callback: CallbackQuery):
     uid = callback.from_user.id
     label = f"sub:{uid}:{plan_id}"
 
-    # Формируем ссылку на оплату ЮМани
+    # successURL — ссылка обратно в бота
+    bot_uname = await _get_bot_username(callback.bot)
+    success_url = quote(f"https://t.me/{bot_uname}")
+
     targets = quote(f"Подписка «{plan['name']}»")
     pay_url = (
         f"https://yoomoney.ru/quickpay/confirm.xml?"
@@ -162,6 +172,7 @@ async def on_pay_yukassa(callback: CallbackQuery):
         f"&paymentType=SC"
         f"&sum={plan['price']}"
         f"&label={label}"
+        f"&successURL={success_url}"
     )
 
     await callback.message.edit_text(

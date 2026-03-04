@@ -9,6 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from bot.config import BOT_TOKEN, LOG_LEVEL
+from bot import database as db
 from bot.database import init_db
 from bot.monitor.userbot import VacancyMonitor
 
@@ -39,6 +40,9 @@ async def main():
     logger.info("Инициализация бота...")
     Path("data").mkdir(exist_ok=True)
     await init_db()
+    # Загружаем дефолтные источники в БД если пусто
+    from bot.config import SOURCE_CHATS
+    await db.init_default_sources(SOURCE_CHATS)
     logger.info("БД инициализирована")
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))

@@ -1,10 +1,11 @@
-"""Админские команды: /stats, /broadcast, /code, /password, /sources, /test_vacancy"""
+"""Админские команды (только для ADMIN_IDS)"""
+import json
 import logging
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from bot import database as db
-from bot.config import ADMIN_IDS, SOURCE_CHATS
+from bot.config import ADMIN_IDS
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -19,6 +20,31 @@ def set_monitor(monitor):
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
+
+# --- Админ-панель ---
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    await message.answer(
+        "⚙️ <b>Админ-панель</b>\n\n"
+        "/stats — Статистика\n"
+        "/sources — Список источников\n"
+        "/add_source &lt;chat&gt; — Добавить источник\n"
+        "/del_source &lt;chat&gt; — Удалить источник\n"
+        "/recent — 10 последних сообщений из источников\n"
+        "/prices — Текущие тарифы\n"
+        "/set_price &lt;plan&gt; &lt;rub&gt; &lt;stars&gt; — Изменить тариф\n"
+        "/broadcast &lt;текст&gt; — Рассылка всем\n"
+        "/test_vacancy — Тест классификатора\n"
+        "/code &lt;код&gt; — Авторизация мониторинга\n"
+        "/password &lt;пароль&gt; — 2FA мониторинга",
+        parse_mode="HTML"
+    )
+
+
+# --- Статистика ---
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
@@ -40,59 +66,180 @@ async def cmd_stats(message: Message):
     )
 
 
+# --- Источники ---
+
 @router.message(Command("sources"))
 async def cmd_sources(message: Message):
-    """Список чатов-источников"""
     if not _is_admin(message.from_user.id):
         return
+    sources = await db.get_sources()
+    if not sources:
+        await message.answer("📡 Нет источников. Добавьте: /add_source @channel_name")
+        return
 
-    lines = ["📡 <b>Чаты-источники</b>\n"]
-    for ref in SOURCE_CHATS:
-        connected = False
-        if _monitor and ref in _monitor._resolved_chats:
-            connected = True
-        status = "✅" if connected else "❌"
+    lines = ["📡 <b>Источники вакансий</b>\n"]
+    for ref in sources:
+        connected = _monitor and ref in _monitor._resolved_chats
+        status = "✅" if connected else "⏳"
         lines.append(f"{status} <code>{ref}</code>")
 
-    lines.append(
-        f"\n📊 Подключено: {len(_monitor._resolved_chats) if _monitor else 0}/{len(SOURCE_CHATS)}\n\n"
-        "ℹ️ Источники задаются в коде (config.py).\n"
-        "Для добавления нового чата — обратитесь к разработчику."
-    )
+    lines.append(f"\n/add_source &lt;chat&gt; — добавить\n/del_source &lt;chat&gt; — удалить")
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("add_source"))
+async def cmd_add_source(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    ref = message.text.replace("/add_source", "", 1).strip().lstrip("@")
+    if not ref:
+        await message.answer("Использование: /add_source @channel_name\nили /add_source +invite_hash")
+        return
+
+    added = await db.add_source(ref)
+    if not added:
+        await message.answer(f"⚠️ Источник <code>{ref}</code> уже существует", parse_mode="HTML")
+        return
+
+    # Переподключаем мониторинг
+    result = ""
+    if _monitor and _monitor._authorized:
+        result = await _monitor.reload_sources()
+
+    await message.answer(f"✅ Источник <code>{ref}</code> добавлен\n{result}", parse_mode="HTML")
+
+
+@router.message(Command("del_source"))
+async def cmd_del_source(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    ref = message.text.replace("/del_source", "", 1).strip().lstrip("@")
+    if not ref:
+        await message.answer("Использование: /del_source @channel_name")
+        return
+
+    deleted = await db.remove_source(ref)
+    if not deleted:
+        await message.answer(f"⚠️ Источник <code>{ref}</code> не найден", parse_mode="HTML")
+        return
+
+    result = ""
+    if _monitor and _monitor._authorized:
+        result = await _monitor.reload_sources()
+
+    await message.answer(f"✅ Источник <code>{ref}</code> удалён\n{result}", parse_mode="HTML")
+
+
+# --- Проверка парсинга ---
+
+@router.message(Command("recent"))
+async def cmd_recent(message: Message):
+    """Получить последние сообщения из источников"""
+    if not _is_admin(message.from_user.id):
+        return
+    if not _monitor or not _monitor._authorized:
+        await message.answer("❌ Мониторинг не авторизован")
+        return
+    if not _monitor._resolved_chats:
+        await message.answer("❌ Нет подключённых чатов")
+        return
+
+    await message.answer("⏳ Загружаю последние сообщения...")
+
+    results = await _monitor.fetch_recent_from_sources(10)
+    if not results:
+        await message.answer("Сообщений не найдено")
+        return
+
+    for i, r in enumerate(results, 1):
+        is_v = "✅ ВАКАНСИЯ" if r["is_vacancy"] else "—"
+        profs = ", ".join(r["professions"]) if r["professions"] else "—"
+        await message.answer(
+            f"<b>#{i}</b> [{r['source']}] {r['date']}\n"
+            f"{is_v} | Профессии: {profs}\n\n"
+            f"<i>{r['text'][:400]}</i>",
+            parse_mode="HTML"
+        )
 
 
 @router.message(Command("test_vacancy"))
 async def cmd_test_vacancy(message: Message):
-    """Отправляет тестовую вакансию админу для проверки"""
     if not _is_admin(message.from_user.id):
         return
-
     from bot.monitor.classifier import classify_vacancy, is_vacancy
 
     test_text = (
         "🔥 Ищу таргетолога для настройки рекламы в Instagram!\n\n"
-        "Задачи:\n"
-        "— Настройка таргетированной рекламы\n"
-        "— Ведение рекламного кабинета\n"
-        "— Оптимизация кампаний\n\n"
-        "Бюджет: от 20 000 руб/мес\n"
-        "Формат: удалённо\n"
-        "Пишите в ЛС!"
+        "Задачи: настройка таргетированной рекламы, ведение РК\n"
+        "Бюджет: от 20 000 руб/мес. Удалённо. Пишите в ЛС!"
     )
-
     is_v = is_vacancy(test_text)
     profs = classify_vacancy(test_text)
-
     await message.answer(
         f"🧪 <b>Тест классификатора</b>\n\n"
-        f"Текст:\n<i>{test_text[:500]}</i>\n\n"
-        f"Является вакансией: {'✅ Да' if is_v else '❌ Нет'}\n"
-        f"Профессии: {', '.join(profs) if profs else 'не определены'}\n\n"
-        f"{'✅ Классификатор работает!' if is_v and profs else '⚠️ Проблема с классификатором'}",
+        f"<i>{test_text}</i>\n\n"
+        f"Вакансия: {'✅' if is_v else '❌'}\n"
+        f"Профессии: {', '.join(profs) if profs else '—'}",
         parse_mode="HTML"
     )
 
+
+# --- Тарифы ---
+
+@router.message(Command("prices"))
+async def cmd_prices(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    plans = await db.get_plans()
+    lines = ["💰 <b>Текущие тарифы</b>\n"]
+    for pid, p in plans.items():
+        lines.append(f"<b>{p['name']}</b> ({pid}): {p['price']}₽ / {p['stars']}⭐ / {p['days']} дн.")
+    lines.append(f"\nИзменить: /set_price &lt;plan&gt; &lt;rub&gt; &lt;stars&gt;")
+    lines.append(f"Пример: <code>/set_price week 500 80</code>")
+    await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("set_price"))
+async def cmd_set_price(message: Message):
+    if not _is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    # /set_price week 500 80
+    if len(parts) != 4:
+        await message.answer(
+            "Использование: <code>/set_price plan rub stars</code>\n"
+            "Пример: <code>/set_price week 500 80</code>\n\n"
+            "Доступные планы: week, month, quarter",
+            parse_mode="HTML"
+        )
+        return
+
+    plan_id, rub, stars = parts[1], parts[2], parts[3]
+    plans = await db.get_plans()
+
+    if plan_id not in plans:
+        await message.answer(f"❌ План <code>{plan_id}</code> не найден. Доступные: week, month, quarter", parse_mode="HTML")
+        return
+
+    try:
+        rub = int(rub)
+        stars = int(stars)
+    except ValueError:
+        await message.answer("❌ Цена и звёзды должны быть числами")
+        return
+
+    plans[plan_id]["price"] = rub
+    plans[plan_id]["stars"] = stars
+    await db.set_plans(plans)
+
+    await message.answer(
+        f"✅ Тариф <b>{plans[plan_id]['name']}</b> обновлён:\n"
+        f"{rub}₽ / {stars}⭐",
+        parse_mode="HTML"
+    )
+
+
+# --- Рассылка ---
 
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message):
@@ -111,8 +258,9 @@ async def cmd_broadcast(message: Message):
         except Exception:
             failed += 1
     await message.answer(f"✅ Отправлено: {sent}, ❌ Ошибок: {failed}")
-    logger.info(f"Broadcast: sent={sent}, failed={failed}")
 
+
+# --- Авторизация Pyrogram ---
 
 @router.message(Command("code"))
 async def cmd_code(message: Message):
@@ -138,7 +286,7 @@ async def cmd_password(message: Message):
         return
     password = message.text.replace("/password", "", 1).strip()
     if not password:
-        await message.answer("Использование: <code>/password ваш_пароль</code>", parse_mode="HTML")
+        await message.answer("Использование: <code>/password пароль</code>", parse_mode="HTML")
         return
     result = await _monitor.submit_password(password)
     await message.answer(result, parse_mode="HTML")
