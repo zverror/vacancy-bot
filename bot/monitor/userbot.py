@@ -15,8 +15,11 @@ logger = logging.getLogger(__name__)
 class VacancyMonitor:
     def __init__(self, bot: Bot):
         self.bot = bot
+        from bot.config import DB_PATH
+        from pathlib import Path
+        session_path = str(Path(DB_PATH).parent / "vacancy_monitor")
         self.client = TelegramClient(
-            "vacancy_monitor",
+            session_path,
             API_ID,
             API_HASH,
             system_version="4.16.30-vxCUSTOM"
