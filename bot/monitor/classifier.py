@@ -1,6 +1,8 @@
-"""Классификатор вакансий по профессиям (keyword-based)"""
+"""Классификатор вакансий по профессиям (keyword-based)
+Обновлён 05.03.2026 на основе анализа 578 сообщений из 3 чатов.
+"""
 import re
-from bot.config import PROFESSIONS
+from bot.config import PROFESSIONS, VACANCY_SIGNALS, SPAM_SIGNALS
 
 
 def classify_vacancy(text: str) -> list[str]:
@@ -22,25 +24,26 @@ def classify_vacancy(text: str) -> list[str]:
 
 def is_vacancy(text: str) -> bool:
     """
-    Грубая проверка: похоже ли сообщение на вакансию.
-    Отсеивает мусор, флуд, обсуждения.
+    Определяет, похоже ли сообщение на вакансию.
+    Двухуровневая проверка: позитивные сигналы + антиспам.
     """
-    if not text or len(text) < 50:
+    if not text or len(text) < 40:
         return False
 
     text_lower = text.lower()
 
-    # Позитивные сигналы — слова типичные для вакансий
-    positive_signals = [
-        "ищу", "ищем", "требуется", "вакансия", "нужен", "нужна", "нужны",
-        "оплата", "бюджет", "зп", "з/п", "гонорар", "берём", "берем",
-        "удалённо", "удаленно", "удалёнка", "удаленка", "фриланс",
-        "проект", "заказ", "задача", "сотрудничество",
-        "откликайтесь", "откликайся", "пишите", "пиши в лс",
-        "опыт от", "опыт работы", "резюме", "портфолио",
-    ]
+    # Антиспам — если совпало, это НЕ вакансия
+    for pattern in SPAM_SIGNALS:
+        if re.search(pattern, text_lower):
+            return False
 
-    positive_count = sum(1 for s in positive_signals if s in text_lower)
+    # Позитивные сигналы
+    positive_count = sum(1 for s in VACANCY_SIGNALS if s in text_lower)
 
-    # Минимум 2 позитивных сигнала
-    return positive_count >= 2
+    # Хэштеги #ищу #вакансия — сильный сигнал
+    hashtag_boost = 0
+    if "#вакансия" in text_lower or "#ищу" in text_lower:
+        hashtag_boost = 2
+
+    # Минимум 2 позитивных сигнала (или 1 + хэштег)
+    return (positive_count + hashtag_boost) >= 2
