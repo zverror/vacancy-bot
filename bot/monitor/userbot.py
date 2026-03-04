@@ -1,39 +1,251 @@
-"""Мониторинг чатов-источников вакансий через Bot API.
+"""Мониторинг чатов-источников вакансий через Pyrogram.
 
-Бот добавляется в чаты как участник/админ и читает сообщения напрямую.
-Не требует Telethon, авторизации по номеру или session-файлов.
+Pyrogram userbot подключается к чатам и слушает новые сообщения.
+Авторизация через Telegram-бота (команда /code) — не требует stdin.
 """
 import logging
 import asyncio
-from aiogram import Bot, Router
-from aiogram.types import Message
+from pyrogram import Client, filters
+from pyrogram.errors import (
+    SessionPasswordNeeded,
+    FloodWait,
+    PhoneCodeExpired,
+    PhoneCodeInvalid,
+)
+from aiogram import Bot
 
-from bot.config import SOURCE_CHATS, ADMIN_IDS
+from bot.config import API_ID, API_HASH, PHONE, SOURCE_CHATS, ADMIN_IDS, DB_PATH
 from bot import database as db
 from bot.monitor.classifier import classify_vacancy, is_vacancy
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-router = Router()
 
 
 class VacancyMonitor:
     def __init__(self, bot: Bot):
         self.bot = bot
-        self._authorized = True  # Bot API не требует авторизации
+        session_path = str(Path(DB_PATH).parent / "pyrogram_session")
+        self.client = Client(
+            session_path,
+            api_id=API_ID,
+            api_hash=API_HASH,
+        )
+        self._resolved_chats: dict[str, int] = {}
+        self._phone_code_hash: str = ""
+        self._authorized = False
 
     async def start(self):
-        """Регистрация обработчика — вызывается из main.py"""
-        logger.info(f"Мониторинг чатов через Bot API")
-        logger.info(f"Чаты-источники: {SOURCE_CHATS}")
+        """Запуск Pyrogram клиента и мониторинга"""
+        logger.info("Запуск мониторинга чатов (Pyrogram)...")
+
+        await self.client.connect()
+
+        if not await self.client.storage.is_bot() and await self.client.storage.user_id():
+            # Проверяем, авторизована ли сессия
+            try:
+                me = await self.client.get_me()
+                logger.info(f"Pyrogram: сессия активна, user={me.first_name} ({me.phone_number})")
+                self._authorized = True
+                await self._setup_monitoring()
+            except Exception:
+                logger.info("Pyrogram: сессия невалидна, требуется авторизация")
+                await self._request_auth_code()
+        else:
+            logger.info("Pyrogram: требуется авторизация")
+            await self._request_auth_code()
+
+    async def _request_auth_code(self):
+        """Запрашиваем код авторизации"""
+        if not PHONE:
+            logger.error("PHONE не задан! Мониторинг недоступен.")
+            await self._notify_admins(
+                "❌ <b>Мониторинг не запущен</b>\n\n"
+                "Переменная PHONE не задана."
+            )
+            return
+
+        try:
+            logger.info(f"[AUTH] Отправляю send_code на {PHONE}...")
+            sent = await self.client.send_code(PHONE)
+            self._phone_code_hash = sent.phone_code_hash
+            code_type = sent.type.name if hasattr(sent.type, 'name') else str(sent.type)
+            logger.info(f"[AUTH] Код отправлен! Тип: {code_type}")
+
+            await self._notify_admins(
+                "🔐 <b>Требуется авторизация мониторинга</b>\n\n"
+                f"Код отправлен на <code>{PHONE}</code>\n"
+                f"Способ: {code_type}\n\n"
+                "Введите код командой:\n"
+                "<code>/code 12345</code>\n\n"
+                "Если потребуется пароль 2FA:\n"
+                "<code>/password ваш_пароль</code>"
+            )
+
+        except FloodWait as e:
+            wait = e.value
+            logger.warning(f"FloodWait: ждём {wait} сек")
+            await self._notify_admins(
+                f"⏳ <b>Telegram требует подождать {wait} сек</b>\n"
+                f"Повторный запрос через {wait} сек."
+            )
+            await asyncio.sleep(wait)
+            await self._request_auth_code()
+
+        except Exception as e:
+            logger.error(f"Ошибка send_code: {e}", exc_info=True)
+            await self._notify_admins(f"❌ Ошибка авторизации: <code>{e}</code>")
+
+    async def submit_code(self, code: str) -> str:
+        """Админ вводит код через бота."""
+        try:
+            await self.client.sign_in(PHONE, self._phone_code_hash, code)
+            self._authorized = True
+            logger.info("Pyrogram: авторизация успешна!")
+            await self._setup_monitoring()
+            return "✅ Авторизация успешна! Мониторинг запущен."
+
+        except SessionPasswordNeeded:
+            logger.info("Pyrogram: требуется пароль 2FA")
+            return "🔐 Требуется пароль 2FA. Введите:\n<code>/password ваш_пароль</code>"
+
+        except PhoneCodeInvalid:
+            return "❌ Неверный код. Попробуйте ещё раз: /code 12345"
+
+        except PhoneCodeExpired:
+            await self._request_auth_code()
+            return "⏰ Код истёк. Запросил новый — проверьте Telegram."
+
+        except FloodWait as e:
+            return f"⏳ Telegram требует подождать {e.value} сек."
+
+        except Exception as e:
+            logger.error(f"Ошибка sign_in: {e}", exc_info=True)
+            return f"❌ Ошибка: <code>{e}</code>"
+
+    async def submit_password(self, password: str) -> str:
+        """Админ вводит пароль 2FA."""
+        try:
+            await self.client.check_password(password)
+            self._authorized = True
+            logger.info("Pyrogram: 2FA авторизация успешна!")
+            await self._setup_monitoring()
+            return "✅ Авторизация с 2FA успешна! Мониторинг запущен."
+
+        except Exception as e:
+            logger.error(f"Ошибка 2FA: {e}", exc_info=True)
+            return f"❌ Ошибка: <code>{e}</code>"
+
+    async def _setup_monitoring(self):
+        """Настройка мониторинга после авторизации"""
+        await self._resolve_chats()
+
+        if not self._resolved_chats:
+            logger.error("Не удалось подключиться ни к одному чату!")
+            await self._notify_admins("⚠️ Не удалось подключиться ни к одному чату-источнику!")
+            return
+
+        chat_ids = list(self._resolved_chats.values())
+
+        @self.client.on_message(filters.chat(chat_ids))
+        async def on_new_message(client, message):
+            await self._handle_message(message)
+
+        chat_names = list(self._resolved_chats.keys())
+        logger.info(f"Мониторинг запущен: {len(chat_ids)} чатов: {chat_names}")
         await self._notify_admins(
-            f"✅ <b>Мониторинг запущен (Bot API)</b>\n\n"
-            f"Чаты ({len(SOURCE_CHATS)}): {', '.join(SOURCE_CHATS)}\n\n"
-            f"⚠️ Бот должен быть добавлен в каждый чат как участник/админ."
+            f"✅ <b>Мониторинг запущен</b>\n\n"
+            f"Чаты ({len(chat_ids)}): {', '.join(chat_names)}"
         )
 
-    async def stop(self):
-        logger.info("Мониторинг остановлен")
+    async def _resolve_chats(self):
+        """Подключаемся к чатам-источникам"""
+        for chat_ref in SOURCE_CHATS:
+            try:
+                if chat_ref.startswith("+"):
+                    # Invite link hash
+                    try:
+                        chat = await self.client.join_chat(chat_ref)
+                        self._resolved_chats[chat_ref] = chat.id
+                        logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
+                    except Exception as e:
+                        # Может уже участник
+                        logger.warning(f"Чат {chat_ref}: join ошибка — {e}")
+                else:
+                    chat = await self.client.get_chat(chat_ref)
+                    self._resolved_chats[chat_ref] = chat.id
+                    logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
+            except Exception as e:
+                logger.error(f"Чат {chat_ref}: не удалось подключиться — {e}")
+
+    async def _handle_message(self, message):
+        """Обработка нового сообщения"""
+        try:
+            text = message.text or message.caption or ""
+            if not text:
+                return
+
+            if not is_vacancy(text):
+                return
+
+            professions = classify_vacancy(text)
+            if not professions:
+                return
+
+            chat = message.chat
+            source = chat.username or str(chat.id)
+            link = f"https://t.me/{chat.username}/{message.id}" if chat.username else ""
+
+            vacancy_id = await db.add_vacancy(
+                source_chat=source,
+                message_id=message.id,
+                text=text[:4000],
+                professions=professions,
+                link=link
+            )
+
+            if vacancy_id is None:
+                return
+
+            logger.info(f"Новая вакансия #{vacancy_id}: {professions} из {source}")
+            await self._broadcast_vacancy(vacancy_id, text, professions, link)
+
+        except Exception as e:
+            logger.error(f"Ошибка обработки: {e}", exc_info=True)
+
+    async def _broadcast_vacancy(self, vacancy_id: int, text: str,
+                                  professions: list[str], link: str):
+        """Рассылка вакансии подписчикам"""
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+        user_ids = set()
+        for prof in professions:
+            users = await db.get_users_by_profession(prof)
+            user_ids.update(users)
+
+        if not user_ids:
+            return
+
+        prof_tags = " ".join(f"#{p.replace('.', '').replace(' ', '_')}" for p in professions)
+        msg_text = f"📌 <b>Новая вакансия</b>\n{prof_tags}\n\n{text[:3500]}"
+
+        keyboard = None
+        if link:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📩 Откликнуться", url=link)]
+            ])
+
+        sent = 0
+        for uid in user_ids:
+            try:
+                await self.bot.send_message(uid, msg_text, parse_mode="HTML", reply_markup=keyboard)
+                await db.mark_vacancy_sent(uid, vacancy_id)
+                sent += 1
+                await asyncio.sleep(0.05)
+            except Exception as e:
+                logger.debug(f"Не удалось отправить #{vacancy_id} → {uid}: {e}")
+
+        logger.info(f"Вакансия #{vacancy_id}: отправлена {sent}/{len(user_ids)}")
 
     async def _notify_admins(self, text: str):
         for admin_id in ADMIN_IDS:
@@ -42,98 +254,7 @@ class VacancyMonitor:
             except Exception as e:
                 logger.debug(f"Не удалось уведомить админа {admin_id}: {e}")
 
-
-def _is_source_chat(chat_id: int, username: str | None) -> bool:
-    """Проверяем, является ли чат источником вакансий"""
-    for ref in SOURCE_CHATS:
-        if ref.startswith("+"):
-            # Invite-link hash — сравниваем по chat_id (после добавления бота)
-            continue
-        # @username или числовой id
-        if username and ref.lstrip("@").lower() == username.lower():
-            return True
-        try:
-            if int(ref) == chat_id:
-                return True
-        except ValueError:
-            pass
-    return False
-
-
-@router.message()
-async def on_group_message(message: Message):
-    """Обработка всех сообщений из групп — фильтрация вакансий"""
-    # Только групповые чаты
-    if message.chat.type not in ("group", "supergroup"):
-        return
-
-    # Только из чатов-источников
-    if not _is_source_chat(message.chat.id, message.chat.username):
-        return
-
-    text = message.text or message.caption or ""
-    if not text:
-        return
-
-    if not is_vacancy(text):
-        return
-
-    professions = classify_vacancy(text)
-    if not professions:
-        return
-
-    # Формируем ссылку
-    link = ""
-    if message.chat.username:
-        link = f"https://t.me/{message.chat.username}/{message.message_id}"
-
-    source = message.chat.username or str(message.chat.id)
-
-    vacancy_id = await db.add_vacancy(
-        source_chat=source,
-        message_id=message.message_id,
-        text=text[:4000],
-        professions=professions,
-        link=link
-    )
-
-    if vacancy_id is None:
-        return
-
-    logger.info(f"Новая вакансия #{vacancy_id}: {professions} из {source}")
-    await _broadcast_vacancy(message.bot, vacancy_id, text, professions, link)
-
-
-async def _broadcast_vacancy(bot: Bot, vacancy_id: int, text: str,
-                              professions: list[str], link: str):
-    """Рассылка вакансии подписчикам"""
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-    user_ids = set()
-    for prof in professions:
-        users = await db.get_users_by_profession(prof)
-        user_ids.update(users)
-
-    if not user_ids:
-        return
-
-    prof_tags = " ".join(f"#{p.replace('.', '').replace(' ', '_')}" for p in professions)
-    msg_text = f"📌 <b>Новая вакансия</b>\n{prof_tags}\n\n{text[:3500]}"
-
-    keyboard = None
-    if link:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📩 Откликнуться", url=link)]
-        ])
-
-    sent = 0
-    for uid in user_ids:
-        try:
-            await bot.send_message(uid, msg_text, parse_mode="HTML", reply_markup=keyboard)
-            await db.mark_vacancy_sent(uid, vacancy_id)
-            sent += 1
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            logger.debug(f"Не удалось отправить #{vacancy_id} → {uid}: {e}")
-
-    logger.info(f"Вакансия #{vacancy_id}: отправлена {sent}/{len(user_ids)}")
+    async def stop(self):
+        if self.client.is_connected:
+            await self.client.disconnect()
+            logger.info("Pyrogram отключён")

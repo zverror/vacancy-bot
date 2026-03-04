@@ -8,6 +8,9 @@ services:
       - bot-data:/app/data
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
+      - API_ID=${API_ID}
+      - API_HASH=${API_HASH}
+      - PHONE=${PHONE}
       - ADMIN_IDS=${ADMIN_IDS:-YOUR_ADMIN_ID}
       - YUKASSA_SHOP_ID=${YUKASSA_SHOP_ID:-}
       - YUKASSA_SECRET_KEY=${YUKASSA_SECRET_KEY:-}
