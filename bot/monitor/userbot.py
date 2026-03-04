@@ -25,12 +25,11 @@ logger = logging.getLogger(__name__)
 class VacancyMonitor:
     def __init__(self, bot: Bot):
         self.bot = bot
-        session_dir = Path(DB_PATH).parent
+        session_dir = Path(DB_PATH).parent.resolve()
         session_dir.mkdir(parents=True, exist_ok=True)
-        session_path = str(session_dir / "pyrogram_session")
-        logger.info(f"[INIT] Session path: {session_path}")
+        logger.info(f"[INIT] workdir={session_dir}, name=pyrogram_session")
         self.client = Client(
-            name=session_path,
+            name="pyrogram_session",
             api_id=API_ID,
             api_hash=API_HASH,
             workdir=str(session_dir),
