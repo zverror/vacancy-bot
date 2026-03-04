@@ -1,122 +1,131 @@
-# Бот-агрегатор фрилансерских вакансий
+# 🔍 Vacancy Bot — Агрегатор вакансий из Telegram
 
-Telegram-бот, который мониторит чаты с вакансиями и рассылает подходящие предложения подписчикам по выбранным профессиям.
+Telegram-бот, который мониторит чаты с вакансиями для фрилансеров в реальном времени и рассылает подходящие предложения подписчикам по выбранным профессиям.
 
-## Стек
-- **aiogram 3.x** — Telegram Bot API
-- **Telethon** — мониторинг чатов (userbot)
-- **SQLite** (aiosqlite) — база данных
-- **Telegram Stars + ЮKassa** — оплата подписки
+## Как работает
 
-## Установка на VPS
+1. **Userbot (Pyrogram)** подключается к указанным Telegram-чатам и слушает новые сообщения
+2. **Классификатор** определяет: это вакансия или нет? К какой профессии относится?
+3. **Бот (aiogram)** рассылает вакансию подписчикам, которые выбрали эту профессию
 
-### 1. Клонирование и настройка
-```bash
-cd /opt
-git clone <repo> vacancy-bot
-cd vacancy-bot
+## Возможности
 
-# Виртуальное окружение
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Конфигурация
-cp .env.example .env
-nano .env  # заполнить BOT_TOKEN, API_ID, API_HASH, PHONE
-```
-
-### 2. Первый запуск (авторизация Telethon)
-```bash
-python -m bot.main
-```
-При первом запуске Telethon попросит ввести:
-1. Номер телефона (формат +7xxxxxxxxxx)
-2. Код из Telegram
-3. Пароль 2FA (если включён)
-
-После авторизации создастся файл `vacancy_monitor.session` — **не удаляйте его**.
-
-### 3. Systemd сервис
-```bash
-sudo nano /etc/systemd/system/vacancy-bot.service
-```
-
-```ini
-[Unit]
-Description=Vacancy Bot
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/vacancy-bot
-ExecStart=/opt/vacancy-bot/venv/bin/python -m bot.main
-Restart=always
-RestartSec=10
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable vacancy-bot
-sudo systemctl start vacancy-bot
-
-# Логи
-sudo journalctl -u vacancy-bot -f
-```
+- 📡 **Мониторинг в реальном времени** — MTProto, не polling
+- 🎯 **20 профессий** — от таргетолога до проджект-менеджера
+- 🛡️ **Антиспам** — фильтрация MLM, «подработки с телефона» и прочего мусора
+- 💳 **Подписка** — Telegram Stars + ЮMoney (с пробным периодом)
+- 🔗 **Ссылки на автора** — кнопки «Сообщение в чате» и «Написать автору»
+- ⏰ **Напоминания** — уведомления об окончании подписки (2 дня, 1 день, 3 часа, 1 час)
+- 🔧 **Админ-панель** — управление источниками, тарифами, рассылками
 
 ## Профессии
-ВебДизайнер, Дизайнер, Таргетолог, СММ, Директолог, Копирайтер, Сторисмейкер, Видеомонтажер, Тех.Спец, Закупщик рекламы
 
-## Чаты-источники
-- @profiwork
-- @rabota_emik
-- @mari_vakansii
-- Закрытый чат (invite link)
+| Профессия | | Профессия |
+|---|---|---|
+| Таргетолог | | Маркетолог |
+| СММ | | Копирайтер |
+| Дизайнер | | ВебДизайнер |
+| Менеджер продаж | | Менеджер маркетплейсов |
+| Закупщик рекламы | | Директолог |
+| Рилсмейкер | | Видеомонтажер |
+| Сторисмейкер | | Тех.Спец |
+| Разработчик | | Продюсер |
+| РОП | | Проджект-менеджер |
+| Авитолог | | Куратор |
 
-## Тарифы
-- Пробный период: 7 дней бесплатно
-- Неделя: 740₽ / 120⭐
-- Месяц: 1290₽ / 210⭐
-- 3 месяца: 2890₽ / 470⭐
+## Стек
 
-## Команды бота
-- `/start` — регистрация и выбор профессий
-- `/profile` — профиль и статус подписки
-- `/professions` — изменить профессии
-- `/subscribe` — оформить подписку
-- `/help` — справка
+- **Python 3.11**
+- **aiogram 3** — бот для пользователей
+- **Pyrogram 2** — userbot для мониторинга чатов
+- **aiosqlite** — база данных
+- **Docker** — деплой
 
-### Админ (ADMIN_IDS в .env)
-- `/stats` — статистика
-- `/broadcast <текст>` — рассылка всем
+## Быстрый старт
 
-## Структура
+### 1. Клонировать
+
+```bash
+git clone https://github.com/zverror/vacancy-bot.git
+cd vacancy-bot
+```
+
+### 2. Настроить `.env`
+
+```bash
+cp .env.example .env
+```
+
+Заполнить:
+
+| Переменная | Описание |
+|---|---|
+| `BOT_TOKEN` | Токен бота из [@BotFather](https://t.me/BotFather) |
+| `API_ID` | API ID из [my.telegram.org](https://my.telegram.org) |
+| `API_HASH` | API Hash оттуда же |
+| `PHONE` | Номер телефона для userbot (формат `+7...`) |
+| `ADMIN_IDS` | Telegram ID администраторов (через запятую) |
+| `YUKASSA_SHOP_ID` | Номер кошелька ЮMoney (опционально) |
+| `YUKASSA_SECRET_KEY` | Секрет HTTP-уведомлений ЮMoney (опционально) |
+
+### 3. Запустить
+
+```bash
+docker compose up -d --build
+```
+
+При первом запуске Pyrogram попросит код авторизации — он придёт в Telegram на указанный номер.
+
+## Админ-команды
+
+| Команда | Описание |
+|---|---|
+| `/admin` | Главное меню администратора |
+| `/admin_help` | Справка по всем командам |
+| `/stats` | Статистика: пользователи, подписки, вакансии |
+| `/sources` | Список чатов-источников |
+| `/add_source <chat>` | Добавить чат-источник |
+| `/del_source <chat>` | Удалить чат-источник |
+| `/recent` | Последние 5 вакансий |
+| `/prices` | Текущие тарифы |
+| `/set_price` | Изменить тарифы |
+| `/broadcast <текст>` | Рассылка всем пользователям |
+| `/test_vacancy <текст>` | Тест классификатора на тексте |
+| `/analyze` | Выгрузка 200 сообщений из каждого чата в JSON |
+
+## Классификатор
+
+Двухуровневый keyword-based:
+
+1. **`is_vacancy()`** — определяет, вакансия ли это (≥2 позитивных сигнала + антиспам)
+2. **`classify_vacancy()`** — определяет профессию по ключевым словам
+
+Обучен на анализе 578 реальных сообщений из 3 чатов. Точность: 78% сообщений-вакансий классифицированы по профессии.
+
+## Структура проекта
+
 ```
 vacancy-bot/
 ├── bot/
-│   ├── main.py           # точка входа
-│   ├── config.py          # конфигурация
-│   ├── database.py        # SQLite
+│   ├── config.py          # Конфигурация, профессии, ключевые слова
+│   ├── database.py        # SQLite — пользователи, подписки, вакансии
+│   ├── main.py            # Точка входа
 │   ├── handlers/
-│   │   ├── start.py       # /start, регистрация
-│   │   ├── profile.py     # /profile, /professions
-│   │   ├── subscription.py # оплата
-│   │   ├── admin.py       # /stats, /broadcast
-│   │   └── help.py        # /help
+│   │   ├── user.py        # Команды пользователя
+│   │   └── admin.py       # Админ-команды
 │   ├── monitor/
-│   │   ├── userbot.py     # Telethon мониторинг
-│   │   └── classifier.py  # классификация вакансий
-│   └── payments/
-│       └── yukassa.py     # ЮKassa (заглушка)
-├── data/                  # БД + логи (создаётся автоматически)
-├── .env                   # секреты
-├── .env.example
+│   │   ├── listener.py    # Pyrogram — мониторинг чатов
+│   │   └── classifier.py  # Классификация вакансий
+│   ├── payments/
+│   │   ├── stars.py       # Telegram Stars
+│   │   └── yukassa.py     # ЮMoney
+│   └── subscription.py    # Управление подписками
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
-├── run.sh
-└── README.md
+└── .env.example
 ```
+
+## Лицензия
+
+MIT
