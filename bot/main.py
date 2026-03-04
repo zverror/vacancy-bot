@@ -10,7 +10,7 @@ from aiogram.enums import ParseMode
 
 from bot.config import BOT_TOKEN, LOG_LEVEL
 from bot.database import init_db
-from bot.monitor.userbot import VacancyMonitor
+from bot.monitor.userbot import VacancyMonitor, router as monitor_router
 
 # Хендлеры
 from bot.handlers import start, profile, subscription, admin, help
@@ -57,20 +57,17 @@ async def main():
     dp.include_router(subscription.router)
     dp.include_router(admin.router)
     dp.include_router(help.router)
+    # Роутер мониторинга — ловит сообщения из чатов-источников
+    dp.include_router(monitor_router)
 
-    # Мониторинг чатов (Telethon)
+    # Мониторинг (уведомление о запуске)
     monitor = VacancyMonitor(bot)
 
-    # Передаём monitor в admin для команд /code и /password
-    from bot.handlers.admin import set_monitor
-    set_monitor(monitor)
-
     try:
-        # Запускаем мониторинг параллельно с ботом
         await monitor.start()
         logger.info("Бот запущен!")
 
-        # Запускаем webhook-сервер для ЮМани (если настроен)
+        # Webhook-сервер для ЮМани
         from bot.config import YUKASSA_SHOP_ID
         webhook_runner = None
         if YUKASSA_SHOP_ID:
