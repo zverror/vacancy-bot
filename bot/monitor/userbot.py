@@ -61,9 +61,25 @@ class VacancyMonitor:
             return
 
         try:
+            logger.info(f"[AUTH] Отправляю send_code_request на {PHONE}...")
             sent = await self.client.send_code_request(PHONE)
             code_type = type(sent.type).__name__
-            logger.info(f"Код авторизации отправлен на {PHONE}, тип: {code_type}")
+            phone_code_hash = sent.phone_code_hash
+            logger.info(f"[AUTH] Ответ: тип={code_type}, hash={phone_code_hash[:10]}..., timeout={getattr(sent, 'timeout', 'N/A')}")
+            logger.info(f"[AUTH] Полный объект sent.type: {sent.type}")
+            logger.info(f"[AUTH] next_type: {getattr(sent, 'next_type', 'N/A')}")
+
+            # Если код ушёл в приложение — пробуем запросить SMS
+            if code_type == "SentCodeTypeApp":
+                logger.info("[AUTH] Код ушёл в приложение. Пробуем force_sms=True...")
+                try:
+                    sent2 = await self.client.send_code_request(PHONE, force_sms=True)
+                    code_type2 = type(sent2.type).__name__
+                    logger.info(f"[AUTH] force_sms результат: тип={code_type2}")
+                    if code_type2 != "SentCodeTypeApp":
+                        code_type = code_type2
+                except Exception as e2:
+                    logger.warning(f"[AUTH] force_sms ошибка: {e2}")
 
             type_desc = {
                 "SentCodeTypeApp": "📱 Код отправлен в приложение Telegram (чат «Telegram»)",
@@ -77,8 +93,9 @@ class VacancyMonitor:
 
             await self._notify_admins(
                 "🔐 <b>Требуется авторизация Telethon</b>\n\n"
-                f"Номер: {PHONE}\n"
-                f"{type_desc}\n\n"
+                f"Номер: <code>{PHONE}</code>\n"
+                f"Способ: {type_desc}\n"
+                f"Тип (raw): <code>{code_type}</code>\n\n"
                 "Введите код командой:\n"
                 "<code>/code 12345</code>\n\n"
                 "Если потребуется пароль 2FA:\n"
