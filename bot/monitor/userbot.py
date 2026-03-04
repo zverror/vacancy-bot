@@ -155,12 +155,31 @@ class VacancyMonitor:
                 async for msg in self.client.get_chat_history(chat_id, limit=limit):
                     text = msg.text or msg.caption or ""
                     if text:
+                        # Ссылка на сообщение
+                        chat = msg.chat
+                        if chat.username:
+                            msg_link = f"https://t.me/{chat.username}/{msg.id}"
+                        else:
+                            msg_link = ""
+
+                        # Автор
+                        author = ""
+                        author_link = ""
+                        if msg.from_user:
+                            author = msg.from_user.first_name or ""
+                            if msg.from_user.username:
+                                author = f"@{msg.from_user.username}"
+                                author_link = f"https://t.me/{msg.from_user.username}"
+
                         results.append({
                             "source": chat_ref,
                             "text": text[:500],
                             "date": msg.date.strftime("%d.%m %H:%M") if msg.date else "",
                             "is_vacancy": is_vacancy(text),
                             "professions": classify_vacancy(text),
+                            "msg_link": msg_link,
+                            "author": author,
+                            "author_link": author_link,
                         })
             except Exception as e:
                 logger.warning(f"Ошибка получения истории {chat_ref}: {e}")
@@ -229,27 +248,38 @@ class VacancyMonitor:
 
             chat = message.chat
             source = chat.username or str(chat.id)
-            link = f"https://t.me/{chat.username}/{message.id}" if chat.username else ""
+            msg_link = f"https://t.me/{chat.username}/{message.id}" if chat.username else ""
+
+            # Автор сообщения
+            author = ""
+            author_link = ""
+            if message.from_user:
+                if message.from_user.username:
+                    author = f"@{message.from_user.username}"
+                    author_link = f"https://t.me/{message.from_user.username}"
+                else:
+                    author = message.from_user.first_name or "Аноним"
 
             vacancy_id = await db.add_vacancy(
                 source_chat=source,
                 message_id=message.id,
                 text=text[:4000],
                 professions=professions,
-                link=link
+                link=msg_link
             )
 
             if vacancy_id is None:
                 return
 
             logger.info(f"Новая вакансия #{vacancy_id}: {professions} из {source}")
-            await self._broadcast_vacancy(vacancy_id, text, professions, link)
+            await self._broadcast_vacancy(vacancy_id, text, professions, msg_link, author, author_link)
 
         except Exception as e:
             logger.error(f"Ошибка обработки: {e}", exc_info=True)
 
     async def _broadcast_vacancy(self, vacancy_id: int, text: str,
-                                  professions: list[str], link: str):
+                                  professions: list[str], msg_link: str,
+                                  author: str = "", author_link: str = ""):
         """Рассылка вакансии подписчикам"""
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -262,13 +292,24 @@ class VacancyMonitor:
             return
 
         prof_tags = " ".join(f"#{p.replace('.', '').replace(' ', '_')}" for p in professions)
-        msg_text = f"📌 <b>Новая вакансия</b>\n{prof_tags}\n\n{text[:3500]}"
 
-        keyboard = None
-        if link:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📩 Откликнуться", url=link)]
-            ])
+        # Формируем текст с автором
+        author_text = ""
+        if author_link:
+            author_text = f"\n\n👤 Автор: <a href=\"{author_link}\">{author}</a>"
+        elif author:
+            author_text = f"\n\n👤 Автор: {author}"
+
+        msg_text = f"📌 <b>Новая вакансия</b>\n{prof_tags}\n\n{text[:3200]}{author_text}"
+
+        # Кнопки
+        buttons = []
+        if msg_link:
+            buttons.append([InlineKeyboardButton(text="💬 Сообщение в чате", url=msg_link)])
+        if author_link:
+            buttons.append([InlineKeyboardButton(text="📩 Написать автору", url=author_link)])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
         sent = 0
         for uid in user_ids:

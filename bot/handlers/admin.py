@@ -23,25 +23,32 @@ def _is_admin(user_id: int) -> bool:
 
 # --- Админ-панель ---
 
+ADMIN_HELP_TEXT = (
+    "⚙️ <b>Админ-панель</b>\n\n"
+    "<b>📊 Мониторинг:</b>\n"
+    "/stats — Статистика бота\n"
+    "/sources — Список источников вакансий\n"
+    "/add_source &lt;chat&gt; — Добавить источник\n"
+    "/del_source &lt;chat&gt; — Удалить источник\n"
+    "/recent — 10 последних сообщений из чатов\n"
+    "/test_vacancy — Тест классификатора\n\n"
+    "<b>💰 Тарифы:</b>\n"
+    "/prices — Текущие тарифы\n"
+    "/set_price &lt;plan&gt; &lt;rub&gt; &lt;stars&gt; — Изменить\n\n"
+    "<b>📢 Коммуникация:</b>\n"
+    "/broadcast &lt;текст&gt; — Рассылка всем\n\n"
+    "<b>🔐 Авторизация:</b>\n"
+    "/code &lt;код&gt; — Код авторизации Pyrogram\n"
+    "/password &lt;пароль&gt; — 2FA пароль"
+)
+
+
 @router.message(Command("admin"))
+@router.message(Command("admin_help"))
 async def cmd_admin(message: Message):
     if not _is_admin(message.from_user.id):
         return
-    await message.answer(
-        "⚙️ <b>Админ-панель</b>\n\n"
-        "/stats — Статистика\n"
-        "/sources — Список источников\n"
-        "/add_source &lt;chat&gt; — Добавить источник\n"
-        "/del_source &lt;chat&gt; — Удалить источник\n"
-        "/recent — 10 последних сообщений из источников\n"
-        "/prices — Текущие тарифы\n"
-        "/set_price &lt;plan&gt; &lt;rub&gt; &lt;stars&gt; — Изменить тариф\n"
-        "/broadcast &lt;текст&gt; — Рассылка всем\n"
-        "/test_vacancy — Тест классификатора\n"
-        "/code &lt;код&gt; — Авторизация мониторинга\n"
-        "/password &lt;пароль&gt; — 2FA мониторинга",
-        parse_mode="HTML"
-    )
+    await message.answer(ADMIN_HELP_TEXT, parse_mode="HTML")
 
 
 # --- Статистика ---
@@ -154,9 +161,16 @@ async def cmd_recent(message: Message):
     for i, r in enumerate(results, 1):
         is_v = "✅ ВАКАНСИЯ" if r["is_vacancy"] else "—"
         profs = ", ".join(r["professions"]) if r["professions"] else "—"
+        author = r.get("author", "—")
+        links = ""
+        if r.get("msg_link"):
+            links += f'\n🔗 <a href="{r["msg_link"]}">Сообщение</a>'
+        if r.get("author_link"):
+            links += f' | <a href="{r["author_link"]}">Автор</a>'
         await message.answer(
             f"<b>#{i}</b> [{r['source']}] {r['date']}\n"
-            f"{is_v} | Профессии: {profs}\n\n"
+            f"{is_v} | Профессии: {profs}\n"
+            f"👤 {author}{links}\n\n"
             f"<i>{r['text'][:400]}</i>",
             parse_mode="HTML"
         )

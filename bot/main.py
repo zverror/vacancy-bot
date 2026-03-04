@@ -85,15 +85,85 @@ async def main():
             await site.start()
             logger.info("Webhook ЮМани на :8080")
 
+        # Фоновая задача — напоминания об окончании подписки
+        reminder_task = asyncio.create_task(_subscription_reminders(bot))
+
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except KeyboardInterrupt:
         logger.info("Остановка")
     finally:
+        reminder_task.cancel()
         if webhook_runner:
             await webhook_runner.cleanup()
         await monitor.stop()
         await bot.session.close()
         logger.info("Бот остановлен")
+
+
+async def _subscription_reminders(bot: Bot):
+    """Фоновая проверка — напоминания об окончании подписки"""
+    import time as _time
+
+    # Интервалы напоминаний: (секунды до конца, текст, ключ)
+    REMINDERS = [
+        (2 * 86400, "2 дня", "2d"),
+        (1 * 86400, "1 день", "1d"),
+        (3 * 3600, "3 часа", "3h"),
+        (1 * 3600, "1 час", "1h"),
+    ]
+
+    logger = logging.getLogger("reminders")
+    sent_reminders: set[str] = set()  # "user_id:key"
+
+    while True:
+        try:
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
+
+            now = _time.time()
+            all_users = await db.get_all_users()
+
+            for uid in all_users:
+                user = await db.get_user(uid)
+                if not user:
+                    continue
+
+                # Определяем конец подписки
+                sub_end = max(user.get("sub_end", 0), user.get("trial_end", 0))
+                if sub_end <= now:
+                    continue  # Уже истекла
+
+                remaining = sub_end - now
+
+                for threshold, label, key in REMINDERS:
+                    reminder_key = f"{uid}:{key}"
+                    if reminder_key in sent_reminders:
+                        continue
+
+                    # Отправляем если осталось меньше порога, но больше предыдущего
+                    if remaining <= threshold:
+                        try:
+                            await bot.send_message(
+                                uid,
+                                f"⏰ <b>Подписка истекает через {label}!</b>\n\n"
+                                f"Продлите подписку, чтобы не пропустить вакансии.\n"
+                                f"/subscribe — продлить",
+                                parse_mode="HTML"
+                            )
+                            sent_reminders.add(reminder_key)
+                            logger.info(f"Напоминание {label} → {uid}")
+                        except Exception as e:
+                            logger.debug(f"Не удалось отправить напоминание {uid}: {e}")
+                        break  # Одно напоминание за раз
+
+            # Чистим старые записи (раз в сутки вряд ли переполнится)
+            if len(sent_reminders) > 10000:
+                sent_reminders.clear()
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Ошибка в напоминаниях: {e}", exc_info=True)
+            await asyncio.sleep(60)
 
 
 if __name__ == "__main__":
