@@ -1,9 +1,11 @@
 """Админские команды (только для ADMIN_IDS)"""
 import json
 import logging
+import tempfile
+import os
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from bot import database as db
 from bot.config import ADMIN_IDS
 
@@ -273,6 +275,67 @@ async def cmd_broadcast(message: Message):
         except Exception:
             failed += 1
     await message.answer(f"✅ Отправлено: {sent}, ❌ Ошибок: {failed}")
+
+
+# --- Анализ чатов ---
+
+@router.message(Command("analyze"))
+async def cmd_analyze(message: Message):
+    """Выгрузить последние 200 сообщений из каждого чата-источника"""
+    if not _is_admin(message.from_user.id):
+        return
+    if not _monitor or not _monitor._authorized:
+        await message.answer("❌ Мониторинг не авторизован")
+        return
+    if not _monitor._resolved_chats:
+        await message.answer("❌ Нет подключённых чатов")
+        return
+
+    await message.answer("⏳ Выгружаю по 200 сообщений из каждого чата...")
+
+    all_data = {}
+    for chat_ref, chat_id in _monitor._resolved_chats.items():
+        messages = []
+        try:
+            async for msg in _monitor.client.get_chat_history(chat_id, limit=200):
+                text = msg.text or msg.caption or ""
+                if not text or len(text) < 20:
+                    continue
+
+                author = ""
+                author_username = ""
+                if msg.from_user:
+                    author = msg.from_user.first_name or ""
+                    author_username = msg.from_user.username or ""
+
+                messages.append({
+                    "id": msg.id,
+                    "date": msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else "",
+                    "text": text[:2000],
+                    "author": author,
+                    "author_username": author_username,
+                })
+        except Exception as e:
+            logger.error(f"Ошибка анализа {chat_ref}: {e}")
+            messages = [{"error": str(e)}]
+
+        all_data[chat_ref] = messages
+
+    total = sum(len(v) for v in all_data.values())
+
+    # Сохраняем в файл и отправляем
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8")
+    json.dump(all_data, tmp, ensure_ascii=False, indent=2)
+    tmp.close()
+
+    try:
+        doc = FSInputFile(tmp.name, filename="chat_analysis.json")
+        await message.answer_document(
+            doc,
+            caption=f"📊 Выгружено {total} сообщений из {len(all_data)} чатов"
+        )
+    finally:
+        os.unlink(tmp.name)
 
 
 # --- Авторизация Pyrogram ---
