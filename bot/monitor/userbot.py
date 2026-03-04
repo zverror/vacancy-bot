@@ -311,17 +311,37 @@ class VacancyMonitor:
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
+        # Параллельная рассылка батчами по 25 (лимит Telegram ~30 msg/sec)
+        BATCH_SIZE = 25
+        user_list = list(user_ids)
         sent = 0
-        for uid in user_ids:
-            try:
-                await self.bot.send_message(uid, msg_text, parse_mode="HTML", reply_markup=keyboard)
-                await db.mark_vacancy_sent(uid, vacancy_id)
-                sent += 1
-                await asyncio.sleep(0.05)
-            except Exception as e:
-                logger.debug(f"Не удалось отправить #{vacancy_id} → {uid}: {e}")
+
+        for i in range(0, len(user_list), BATCH_SIZE):
+            batch = user_list[i:i + BATCH_SIZE]
+            tasks = []
+            for uid in batch:
+                tasks.append(self._send_vacancy_to_user(uid, vacancy_id, msg_text, keyboard))
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            sent += sum(1 for r in results if r is True)
+            # Пауза между батчами — уважаем лимиты Telegram
+            if i + BATCH_SIZE < len(user_list):
+                await asyncio.sleep(1.0)
 
         logger.info(f"Вакансия #{vacancy_id}: отправлена {sent}/{len(user_ids)}")
+
+    async def _send_vacancy_to_user(self, uid: int, vacancy_id: int,
+                                     msg_text: str, keyboard) -> bool:
+        try:
+            await self.bot.send_message(
+                uid, msg_text, parse_mode="HTML",
+                reply_markup=keyboard,
+                disable_web_page_preview=True
+            )
+            await db.mark_vacancy_sent(uid, vacancy_id)
+            return True
+        except Exception as e:
+            logger.debug(f"Не удалось отправить #{vacancy_id} → {uid}: {e}")
+            return False
 
     async def _notify_admins(self, text: str):
         for admin_id in ADMIN_IDS:

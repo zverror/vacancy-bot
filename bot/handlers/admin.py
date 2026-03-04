@@ -172,7 +172,8 @@ async def cmd_recent(message: Message):
             f"{is_v} | Профессии: {profs}\n"
             f"👤 {author}{links}\n\n"
             f"<i>{r['text'][:400]}</i>",
-            parse_mode="HTML"
+            parse_mode="HTML",
+            disable_web_page_preview=True
         )
 
 
