@@ -43,6 +43,16 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
+    # Регистрация команд меню
+    from aiogram.types import BotCommand
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Начало работы"),
+        BotCommand(command="profile", description="Профиль и подписка"),
+        BotCommand(command="professions", description="Выбор профессий"),
+        BotCommand(command="subscribe", description="Оформить подписку"),
+        BotCommand(command="help", description="Инструкция"),
+    ])
+
     dp = Dispatcher()
     dp.include_router(start.router)
     dp.include_router(profile.router)

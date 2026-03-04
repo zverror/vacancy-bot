@@ -1,7 +1,7 @@
 """Обработчики /profile и /professions"""
 import time
 from datetime import datetime, timezone, timedelta
-from aiogram import Router
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
 from bot import database as db
@@ -18,6 +18,7 @@ def _format_date(ts: float) -> str:
 
 
 @router.message(Command("profile"))
+@router.message(F.text == "👤 Профиль")
 async def cmd_profile(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user:
@@ -47,6 +48,7 @@ async def cmd_profile(message: Message):
 
 
 @router.message(Command("professions"))
+@router.message(F.text == "🔍 Профессии")
 async def cmd_professions(message: Message):
     current = await db.get_user_professions(message.from_user.id)
     _selections[message.from_user.id] = set(current)

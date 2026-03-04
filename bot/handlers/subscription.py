@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 from bot import database as db
 from bot.config import PLANS, YUKASSA_SHOP_ID
+from urllib.parse import quote
 import os
 
 router = Router()
@@ -39,6 +40,7 @@ def _payment_method_keyboard(plan_id: str) -> InlineKeyboardMarkup:
 
 
 @router.message(Command("subscribe"))
+@router.message(F.text == "💎 Подписка")
 async def cmd_subscribe(message: Message):
     await message.answer(
         "💎 <b>Тарифы подписки</b>\n\n"
@@ -151,11 +153,12 @@ async def on_pay_yukassa(callback: CallbackQuery):
     label = f"sub:{uid}:{plan_id}"
 
     # Формируем ссылку на оплату ЮМани
+    targets = quote(f"Подписка «{plan['name']}»")
     pay_url = (
         f"https://yoomoney.ru/quickpay/confirm.xml?"
         f"receiver={YUKASSA_SHOP_ID}"
         f"&quickpay-form=shop"
-        f"&targets=Подписка «{plan['name']}»"
+        f"&targets={targets}"
         f"&paymentType=SC"
         f"&sum={plan['price']}"
         f"&label={label}"

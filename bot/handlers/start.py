@@ -1,20 +1,31 @@
-"""Обработчик /start — регистрация и выбор профессий"""
+"""Обработчик /start — онбординг, регистрация, выбор профессий"""
 import logging
 from aiogram import Router, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    BotCommand, ReplyKeyboardMarkup, KeyboardButton
+)
 from bot import database as db
 from bot.config import PROFESSIONS, TRIAL_DAYS
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-# Временное хранилище выбранных профессий (user_id -> set)
 _selections: dict[int, set[str]] = {}
+
+# Постоянное меню (ReplyKeyboard)
+MAIN_MENU = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="👤 Профиль"), KeyboardButton(text="🔍 Профессии")],
+        [KeyboardButton(text="💎 Подписка"), KeyboardButton(text="📖 Инструкция")],
+    ],
+    resize_keyboard=True,
+    is_persistent=True,
+)
 
 
 def _professions_keyboard(selected: set[str]) -> InlineKeyboardMarkup:
-    """Клавиатура выбора профессий с галочками"""
     buttons = []
     for prof in PROFESSIONS:
         mark = "✅ " if prof in selected else ""
@@ -29,16 +40,19 @@ def _professions_keyboard(selected: set[str]) -> InlineKeyboardMarkup:
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     user = await db.get_user(message.from_user.id)
+
     if user:
         profs = await db.get_user_professions(message.from_user.id)
         if profs:
             await message.answer(
-                f"С возвращением! Ваши профессии: {', '.join(profs)}\n\n"
-                "Используйте /profile для просмотра профиля, /professions для смены профессий."
+                f"С возвращением! 👋\n\n"
+                f"Ваши профессии: {', '.join(profs)}\n\n"
+                "Используйте меню внизу для навигации.",
+                reply_markup=MAIN_MENU
             )
             return
 
-    # Новый пользователь или без профессий
+    # Новый пользователь — онбординг
     await db.add_user(
         user_id=message.from_user.id,
         username=message.from_user.username or "",
@@ -46,14 +60,28 @@ async def cmd_start(message: Message):
         trial_days=TRIAL_DAYS
     )
 
+    await message.answer(
+        "👋 <b>Добро пожаловать!</b>\n\n"
+        "Я — бот-агрегатор фрилансерских вакансий.\n\n"
+        "<b>Как это работает:</b>\n"
+        "1️⃣ Вы выбираете свои профессии (можно несколько)\n"
+        "2️⃣ Я мониторю крупные чаты с вакансиями 24/7\n"
+        "3️⃣ Как только появляется вакансия по вашему профилю — мгновенно отправляю вам\n\n"
+        "💡 <b>Больше не нужно</b> сидеть в десятке чатов и листать сотни сообщений.\n"
+        "Вы получаете только то, что подходит именно вам.\n\n"
+        f"🎁 <b>Пробный период — {TRIAL_DAYS} дней бесплатно!</b>\n\n"
+        "Давайте начнём — выберите профессии 👇",
+        reply_markup=MAIN_MENU,
+        parse_mode="HTML"
+    )
+
     _selections[message.from_user.id] = set()
 
     await message.answer(
-        "👋 Привет! Я бот-агрегатор фрилансерских вакансий.\n\n"
-        "Выберите профессии, по которым хотите получать вакансии.\n"
-        "Можно выбрать несколько — нажимайте на нужные, затем «Готово».\n\n"
-        f"🎁 Вам доступен бесплатный пробный период — {TRIAL_DAYS} дней!",
-        reply_markup=_professions_keyboard(set())
+        "🎯 <b>Выберите профессии</b>\n\n"
+        "Нажимайте на нужные, затем «Готово»:",
+        reply_markup=_professions_keyboard(set()),
+        parse_mode="HTML"
     )
 
 
@@ -74,15 +102,14 @@ async def on_profession_toggle(callback: CallbackQuery):
 
         await db.set_user_professions(uid, list(selected))
         await callback.message.edit_text(
-            f"✅ Отлично! Ваши профессии: {', '.join(sorted(selected))}\n\n"
-            "Теперь вы будете получать вакансии по выбранным направлениям.\n\n"
-            "/profile — ваш профиль\n"
-            "/professions — изменить профессии\n"
-            "/subscribe — оформить подписку"
+            f"✅ <b>Готово!</b>\n\n"
+            f"Ваши профессии: {', '.join(sorted(selected))}\n\n"
+            "Теперь я буду отправлять вам подходящие вакансии в реальном времени.\n\n"
+            "Используйте меню внизу для навигации 👇",
+            parse_mode="HTML"
         )
         return
 
-    # Переключение профессии
     if data in _selections[uid]:
         _selections[uid].discard(data)
     else:
