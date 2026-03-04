@@ -1,4 +1,4 @@
-"""Админские команды: /stats, /broadcast"""
+"""Админские команды: /stats, /broadcast, /code, /password"""
 import logging
 from aiogram import Router
 from aiogram.filters import Command
@@ -8,6 +8,13 @@ from bot.config import ADMIN_IDS
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# Ссылка на VacancyMonitor — устанавливается из main.py
+_monitor = None
+
+def set_monitor(monitor):
+    global _monitor
+    _monitor = monitor
 
 
 def _is_admin(user_id: int) -> bool:
@@ -55,3 +62,47 @@ async def cmd_broadcast(message: Message):
 
     await message.answer(f"✅ Рассылка завершена: отправлено {sent}, ошибок {failed}")
     logger.info(f"Broadcast: sent={sent}, failed={failed}, by={message.from_user.id}")
+
+
+@router.message(Command("code"))
+async def cmd_code(message: Message):
+    """Ввод кода авторизации Telethon"""
+    if not _is_admin(message.from_user.id):
+        return
+
+    if not _monitor:
+        await message.answer("❌ Монитор не инициализирован")
+        return
+
+    code = message.text.replace("/code", "", 1).strip()
+    if not code:
+        await message.answer("Использование: /code 12345")
+        return
+
+    result = await _monitor.submit_code(code)
+    await message.answer(result, parse_mode="HTML")
+
+
+@router.message(Command("password"))
+async def cmd_password(message: Message):
+    """Ввод пароля 2FA для Telethon"""
+    if not _is_admin(message.from_user.id):
+        return
+
+    if not _monitor:
+        await message.answer("❌ Монитор не инициализирован")
+        return
+
+    password = message.text.replace("/password", "", 1).strip()
+    if not password:
+        await message.answer("Использование: /password ваш_пароль")
+        return
+
+    result = await _monitor.submit_password(password)
+    await message.answer(result, parse_mode="HTML")
+
+    # Удаляем сообщение с паролем для безопасности
+    try:
+        await message.delete()
+    except Exception:
+        pass

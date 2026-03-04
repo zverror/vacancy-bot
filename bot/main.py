@@ -61,6 +61,10 @@ async def main():
     # Мониторинг чатов (Telethon)
     monitor = VacancyMonitor(bot)
 
+    # Передаём monitor в admin для команд /code и /password
+    from bot.handlers.admin import set_monitor
+    set_monitor(monitor)
+
     try:
         # Запускаем мониторинг параллельно с ботом
         await monitor.start()
