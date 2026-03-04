@@ -66,11 +66,26 @@ async def main():
         await monitor.start()
         logger.info("Бот запущен!")
 
+        # Запускаем webhook-сервер для ЮМани (если настроен)
+        from bot.config import YUKASSA_SHOP_ID
+        webhook_runner = None
+        if YUKASSA_SHOP_ID:
+            from aiohttp import web
+            from bot.payments.yukassa import create_yumoney_app
+            app = create_yumoney_app(bot)
+            webhook_runner = web.AppRunner(app)
+            await webhook_runner.setup()
+            site = web.TCPSite(webhook_runner, "0.0.0.0", 8080)
+            await site.start()
+            logger.info("Webhook-сервер ЮМани запущен на :8080")
+
         # Запускаем polling
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except KeyboardInterrupt:
         logger.info("Остановка по Ctrl+C")
     finally:
+        if webhook_runner:
+            await webhook_runner.cleanup()
         await monitor.stop()
         await bot.session.close()
         logger.info("Бот остановлен")

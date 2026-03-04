@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 from bot import database as db
 from bot.config import PLANS, YUKASSA_SHOP_ID
+import os
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -146,9 +147,28 @@ async def on_pay_yukassa(callback: CallbackQuery):
         await callback.answer("Ошибка", show_alert=True)
         return
 
-    # TODO: Создание платежа через ЮKassa API
-    # from bot.payments.yukassa import create_payment
-    # payment_url = await create_payment(callback.from_user.id, plan_id)
-    # await callback.message.answer(f"Оплата: {payment_url}")
+    uid = callback.from_user.id
+    label = f"sub:{uid}:{plan_id}"
 
-    await callback.answer("Оплата картой будет доступна в ближайшее время", show_alert=True)
+    # Формируем ссылку на оплату ЮМани
+    pay_url = (
+        f"https://yoomoney.ru/quickpay/confirm.xml?"
+        f"receiver={YUKASSA_SHOP_ID}"
+        f"&quickpay-form=shop"
+        f"&targets=Подписка «{plan['name']}»"
+        f"&paymentType=SC"
+        f"&sum={plan['price']}"
+        f"&label={label}"
+    )
+
+    await callback.message.edit_text(
+        f"💳 <b>Оплата: {plan['name']} — {plan['price']}₽</b>\n\n"
+        f"Нажмите кнопку ниже для перехода к оплате.\n"
+        f"После оплаты подписка активируется автоматически.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"💳 Оплатить {plan['price']}₽", url=pay_url)],
+            [InlineKeyboardButton(text="← Назад", callback_data="sub:back")],
+        ]),
+        parse_mode="HTML"
+    )
+    await callback.answer()
