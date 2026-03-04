@@ -37,6 +37,7 @@ async def main():
         sys.exit(1)
 
     logger.info("Инициализация бота...")
+    Path("data").mkdir(exist_ok=True)
     await init_db()
     logger.info("БД инициализирована")
 
@@ -53,13 +54,13 @@ async def main():
     from bot.handlers.admin import set_monitor
     set_monitor(monitor)
 
+    webhook_runner = None
     try:
         await monitor.start()
         logger.info("Бот запущен!")
 
         # Webhook ЮМани
         from bot.config import YUKASSA_SHOP_ID
-        webhook_runner = None
         if YUKASSA_SHOP_ID:
             from aiohttp import web
             from bot.payments.yukassa import create_yumoney_app
