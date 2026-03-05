@@ -9,15 +9,23 @@ def classify_vacancy(text: str) -> list[str]:
     """
     Определяет профессии, к которым относится вакансия.
     Возвращает список подходящих профессий.
+    Поддерживает как обычные подстроки, так и regex-паттерны (содержат . * + и т.д.)
     """
     text_lower = text.lower()
     matched = []
 
     for profession, keywords in PROFESSIONS.items():
         for kw in keywords:
-            if kw.lower() in text_lower:
-                matched.append(profession)
-                break
+            kw_lower = kw.lower()
+            # Если ключевое слово содержит regex-спецсимволы — используем re.search
+            if any(c in kw_lower for c in ".*+?[](){}|\\^$"):
+                if re.search(kw_lower, text_lower):
+                    matched.append(profession)
+                    break
+            else:
+                if kw_lower in text_lower:
+                    matched.append(profession)
+                    break
 
     return matched
 
@@ -27,7 +35,7 @@ def is_vacancy(text: str) -> bool:
     Определяет, похоже ли сообщение на вакансию.
     Двухуровневая проверка: позитивные сигналы + антиспам.
     """
-    if not text or len(text) < 40:
+    if not text or len(text) < 30:
         return False
 
     text_lower = text.lower()
@@ -41,9 +49,8 @@ def is_vacancy(text: str) -> bool:
     positive_count = sum(1 for s in VACANCY_SIGNALS if s in text_lower)
 
     # Хэштеги #ищу #вакансия — сильный сигнал
-    hashtag_boost = 0
-    if "#вакансия" in text_lower or "#ищу" in text_lower:
-        hashtag_boost = 2
+    if "#вакансия" in text_lower or "#ищу" in text_lower or "#работа" in text_lower:
+        positive_count += 2
 
-    # Минимум 2 позитивных сигнала (или 1 + хэштег)
-    return (positive_count + hashtag_boost) >= 2
+    # 1 сигнала достаточно — антиспам уже отсёк мусор выше
+    return positive_count >= 1
