@@ -85,14 +85,16 @@ async def main():
             await site.start()
             logger.info("Webhook ЮМани на :8080")
 
-        # Фоновая задача — напоминания об окончании подписки
+        # Фоновые задачи
         reminder_task = asyncio.create_task(_subscription_reminders(bot))
+        sub_check_task = asyncio.create_task(_check_subscriptions_loop(monitor))
 
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except KeyboardInterrupt:
         logger.info("Остановка")
     finally:
         reminder_task.cancel()
+        sub_check_task.cancel()
         if webhook_runner:
             await webhook_runner.cleanup()
         await monitor.stop()
@@ -164,6 +166,21 @@ async def _subscription_reminders(bot: Bot):
         except Exception as e:
             logger.error(f"Ошибка в напоминаниях: {e}", exc_info=True)
             await asyncio.sleep(60)
+
+
+async def _check_subscriptions_loop(monitor: VacancyMonitor):
+    """Каждые 5 минут проверяет подписку на все группы из БД."""
+    slogger = logging.getLogger("sub_check")
+    # Ждём 60 сек после старта — дать время авторизоваться
+    await asyncio.sleep(60)
+    while True:
+        try:
+            await monitor.check_subscriptions()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            slogger.error(f"Ошибка проверки подписок: {e}", exc_info=True)
+        await asyncio.sleep(300)  # 5 минут
 
 
 if __name__ == "__main__":

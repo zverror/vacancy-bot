@@ -41,9 +41,12 @@ async def init_db():
             text TEXT NOT NULL,
             professions TEXT NOT NULL,
             link TEXT,
+            text_hash TEXT,
             created_at REAL NOT NULL,
             UNIQUE(source_chat, message_id)
         );
+
+        CREATE INDEX IF NOT EXISTS idx_vacancies_text_hash ON vacancies(text_hash);
 
         CREATE TABLE IF NOT EXISTS sent_vacancies (
             user_id INTEGER NOT NULL,
@@ -189,12 +192,13 @@ async def get_users_by_profession(profession: str) -> list[int]:
 # --- Вакансии ---
 
 async def add_vacancy(source_chat: str, message_id: int, text: str,
-                      professions: list[str], link: str) -> int | None:
+                      professions: list[str], link: str,
+                      text_hash: str = "") -> int | None:
     db = await get_db()
     try:
         cursor = await db.execute(
-            "INSERT INTO vacancies (source_chat, message_id, text, professions, link, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (source_chat, message_id, text, ",".join(professions), link, time.time())
+            "INSERT INTO vacancies (source_chat, message_id, text, professions, link, text_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (source_chat, message_id, text, ",".join(professions), link, text_hash, time.time())
         )
         await db.commit()
         vacancy_id = cursor.lastrowid
@@ -203,6 +207,19 @@ async def add_vacancy(source_chat: str, message_id: int, text: str,
     except aiosqlite.IntegrityError:
         await db.close()
         return None
+
+
+async def vacancy_hash_exists(text_hash: str) -> bool:
+    """Проверяет, есть ли вакансия с таким хэшем текста (дедупликация)."""
+    if not text_hash:
+        return False
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM vacancies WHERE text_hash = ? LIMIT 1", (text_hash,)
+    )
+    row = await cursor.fetchone()
+    await db.close()
+    return row is not None
 
 
 async def mark_vacancy_sent(user_id: int, vacancy_id: int):

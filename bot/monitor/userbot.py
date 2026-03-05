@@ -5,12 +5,18 @@ Pyrogram userbot подключается к чатам и слушает нов
 """
 import logging
 import asyncio
+import hashlib
+import re
 from pyrogram import Client, filters
 from pyrogram.errors import (
     SessionPasswordNeeded,
     FloodWait,
     PhoneCodeExpired,
     PhoneCodeInvalid,
+    UserAlreadyParticipant,
+    InviteHashExpired,
+    InviteHashInvalid,
+    ChannelPrivate,
 )
 from aiogram import Bot
 
@@ -20,6 +26,15 @@ from bot.monitor.classifier import classify_vacancy, is_vacancy
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _text_hash(text: str) -> str:
+    """Нормализует текст и возвращает SHA-256 хэш для дедупликации."""
+    # Убираем пробелы, переносы, приводим к нижнему регистру
+    normalized = re.sub(r'\s+', ' ', text.strip().lower())
+    # Берём первые 500 символов — достаточно для идентификации
+    normalized = normalized[:500]
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:32]
 
 
 class VacancyMonitor:
@@ -147,6 +162,97 @@ class VacancyMonitor:
         await self._setup_monitoring()
         return f"✅ Переподключено чатов: {len(self._resolved_chats)}"
 
+    async def join_source(self, chat_ref: str) -> str:
+        """Подписаться на группу-источник."""
+        if not self._authorized:
+            return "❌ Мониторинг не авторизован"
+        try:
+            chat = await self.client.join_chat(chat_ref)
+            self._resolved_chats[chat_ref] = chat.id
+            logger.info(f"Подписались на {chat_ref} (id={chat.id})")
+            # Перерегистрируем обработчик на обновлённый список
+            await self._setup_monitoring()
+            return f"✅ Подписались на {chat_ref}"
+        except UserAlreadyParticipant:
+            # Уже подписаны — просто резолвим
+            try:
+                chat = await self.client.get_chat(chat_ref)
+                self._resolved_chats[chat_ref] = chat.id
+                await self._setup_monitoring()
+                return f"✅ Уже подписаны на {chat_ref}"
+            except Exception as e:
+                return f"⚠️ Уже подписаны, но ошибка резолва: {e}"
+        except (InviteHashExpired, InviteHashInvalid):
+            return f"❌ Ссылка-приглашение невалидна: {chat_ref}"
+        except ChannelPrivate:
+            return f"❌ Приватный канал, доступ закрыт: {chat_ref}"
+        except FloodWait as e:
+            return f"⏳ Telegram требует подождать {e.value} сек"
+        except Exception as e:
+            logger.error(f"Ошибка join {chat_ref}: {e}", exc_info=True)
+            return f"❌ Не удалось подписаться: {e}"
+
+    async def leave_source(self, chat_ref: str) -> str:
+        """Отписаться от группы-источника."""
+        if not self._authorized:
+            return "❌ Мониторинг не авторизован"
+        chat_id = self._resolved_chats.get(chat_ref)
+        if chat_id:
+            try:
+                await self.client.leave_chat(chat_id)
+                logger.info(f"Отписались от {chat_ref} (id={chat_id})")
+            except Exception as e:
+                logger.warning(f"Ошибка leave {chat_ref}: {e}")
+            self._resolved_chats.pop(chat_ref, None)
+        else:
+            # Пробуем резолвить и уйти
+            try:
+                chat = await self.client.get_chat(chat_ref)
+                await self.client.leave_chat(chat.id)
+                logger.info(f"Отписались от {chat_ref}")
+            except Exception as e:
+                logger.warning(f"Не удалось отписаться от {chat_ref}: {e}")
+        await self._setup_monitoring()
+        return f"✅ Отписались от {chat_ref}"
+
+    async def check_subscriptions(self):
+        """Проверяет подписку на все группы из БД. Подписывается, если не подписан."""
+        if not self._authorized:
+            return
+        sources = await db.get_sources()
+        for chat_ref in sources:
+            if chat_ref in self._resolved_chats:
+                # Проверяем что подписка ещё активна
+                try:
+                    await self.client.get_chat(self._resolved_chats[chat_ref])
+                except ChannelPrivate:
+                    logger.warning(f"Потеряли доступ к {chat_ref}, переподключаемся...")
+                    await self._try_join(chat_ref)
+                except Exception:
+                    pass
+            else:
+                # Не подписаны — подписываемся
+                logger.info(f"Не подписаны на {chat_ref}, подписываемся...")
+                await self._try_join(chat_ref)
+
+    async def _try_join(self, chat_ref: str):
+        """Попытка подписаться на чат (тихо, для фоновой проверки)."""
+        try:
+            chat = await self.client.join_chat(chat_ref)
+            self._resolved_chats[chat_ref] = chat.id
+            logger.info(f"Авто-подписка: {chat_ref} (id={chat.id})")
+            await self._notify_admins(f"🔄 Авто-подписка на <code>{chat_ref}</code>")
+        except UserAlreadyParticipant:
+            try:
+                chat = await self.client.get_chat(chat_ref)
+                self._resolved_chats[chat_ref] = chat.id
+            except Exception:
+                pass
+        except FloodWait as e:
+            logger.warning(f"FloodWait при join {chat_ref}: {e.value} сек")
+        except Exception as e:
+            logger.warning(f"Авто-подписка {chat_ref} не удалась: {e}")
+
     async def fetch_recent_from_sources(self, limit: int = 10) -> list[dict]:
         """Получить последние сообщения из чатов-источников через Pyrogram"""
         results = []
@@ -216,19 +322,25 @@ class VacancyMonitor:
         )
 
     async def _resolve_chat(self, chat_ref: str):
-        """Подключаемся к одному чату"""
+        """Подключаемся к чату — всегда пробуем join_chat (подписка + резолв)."""
         try:
-            if chat_ref.startswith("+"):
-                try:
-                    chat = await self.client.join_chat(chat_ref)
-                    self._resolved_chats[chat_ref] = chat.id
-                    logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
-                except Exception as e:
-                    logger.warning(f"Чат {chat_ref}: join ошибка — {e}")
-            else:
+            chat = await self.client.join_chat(chat_ref)
+            self._resolved_chats[chat_ref] = chat.id
+            logger.info(f"Чат {chat_ref}: подписались (id={chat.id})")
+        except UserAlreadyParticipant:
+            # Уже подписаны — просто резолвим
+            try:
                 chat = await self.client.get_chat(chat_ref)
                 self._resolved_chats[chat_ref] = chat.id
-                logger.info(f"Чат {chat_ref}: подключён (id={chat.id})")
+                logger.info(f"Чат {chat_ref}: уже подписаны (id={chat.id})")
+            except Exception as e:
+                logger.error(f"Чат {chat_ref}: подписаны, но ошибка резолва — {e}")
+        except FloodWait as e:
+            logger.warning(f"Чат {chat_ref}: FloodWait {e.value} сек")
+        except (InviteHashExpired, InviteHashInvalid):
+            logger.error(f"Чат {chat_ref}: ссылка-приглашение невалидна")
+        except ChannelPrivate:
+            logger.error(f"Чат {chat_ref}: приватный, доступ закрыт")
         except Exception as e:
             logger.error(f"Чат {chat_ref}: не удалось подключиться — {e}")
 
@@ -260,12 +372,19 @@ class VacancyMonitor:
                 else:
                     author = message.from_user.first_name or "Аноним"
 
+            # Дедупликация по хэшу текста (одна вакансия из разных сообщений)
+            t_hash = _text_hash(text)
+            if await db.vacancy_hash_exists(t_hash):
+                logger.debug(f"Дубликат вакансии (hash={t_hash[:8]}...) из {source}")
+                return
+
             vacancy_id = await db.add_vacancy(
                 source_chat=source,
                 message_id=message.id,
                 text=text[:4000],
                 professions=professions,
-                link=msg_link
+                link=msg_link,
+                text_hash=t_hash
             )
 
             if vacancy_id is None:

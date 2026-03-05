@@ -111,12 +111,12 @@ async def cmd_add_source(message: Message):
         await message.answer(f"⚠️ Источник <code>{ref}</code> уже существует", parse_mode="HTML")
         return
 
-    # Переподключаем мониторинг
-    result = ""
+    # Автоматически подписываемся на группу
+    join_result = ""
     if _monitor and _monitor._authorized:
-        result = await _monitor.reload_sources()
+        join_result = await _monitor.join_source(ref)
 
-    await message.answer(f"✅ Источник <code>{ref}</code> добавлен\n{result}", parse_mode="HTML")
+    await message.answer(f"✅ Источник <code>{ref}</code> добавлен\n{join_result}", parse_mode="HTML")
 
 
 @router.message(Command("del_source"))
@@ -128,16 +128,17 @@ async def cmd_del_source(message: Message):
         await message.answer("Использование: /del_source @channel_name")
         return
 
+    # Сначала отписываемся от группы
+    leave_result = ""
+    if _monitor and _monitor._authorized:
+        leave_result = await _monitor.leave_source(ref)
+
     deleted = await db.remove_source(ref)
     if not deleted:
-        await message.answer(f"⚠️ Источник <code>{ref}</code> не найден", parse_mode="HTML")
+        await message.answer(f"⚠️ Источник <code>{ref}</code> не найден в БД\n{leave_result}", parse_mode="HTML")
         return
 
-    result = ""
-    if _monitor and _monitor._authorized:
-        result = await _monitor.reload_sources()
-
-    await message.answer(f"✅ Источник <code>{ref}</code> удалён\n{result}", parse_mode="HTML")
+    await message.answer(f"✅ Источник <code>{ref}</code> удалён\n{leave_result}", parse_mode="HTML")
 
 
 # --- Проверка парсинга ---
