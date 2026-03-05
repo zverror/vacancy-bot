@@ -31,6 +31,7 @@ ADMIN_HELP_TEXT = (
     "/stats — Статистика бота\n"
     "/sources — Список источников вакансий\n"
     "/add_source &lt;chat&gt; — Добавить источник\n"
+    "/add_sources — Добавить список источников (каждая строка = 1)\n"
     "/del_source &lt;chat&gt; — Удалить источник\n"
     "/recent — 10 последних сообщений из чатов\n"
     "/test_vacancy — Тест классификатора\n"
@@ -117,6 +118,87 @@ async def cmd_add_source(message: Message):
         join_result = await _monitor.join_source(ref)
 
     await message.answer(f"✅ Источник <code>{ref}</code> добавлен\n{join_result}", parse_mode="HTML")
+
+
+@router.message(Command("add_sources"))
+async def cmd_add_sources(message: Message):
+    """Массовое добавление источников — каждая строка = 1 источник."""
+    if not _is_admin(message.from_user.id):
+        return
+
+    # Текст после команды
+    raw = message.text.replace("/add_sources", "", 1).strip()
+    if not raw:
+        await message.answer(
+            "📋 <b>Массовое добавление источников</b>\n\n"
+            "Отправьте команду, а после неё — список чатов, "
+            "каждый с новой строки:\n\n"
+            "<code>/add_sources\n"
+            "mari_vakansii\n"
+            "profiwork\n"
+            "frilanc\n"
+            "https://t.me/rueventjob4at</code>\n\n"
+            "Допустимые форматы строки:\n"
+            "• <code>username</code>\n"
+            "• <code>@username</code>\n"
+            "• <code>https://t.me/username</code>\n"
+            "• <code>https://t.me/+invite_hash</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    if not lines:
+        await message.answer("⚠️ Пустой список")
+        return
+
+    added = []
+    skipped = []
+    errors = []
+
+    for line in lines:
+        # Нормализация: убираем @, https://t.me/
+        ref = line
+        ref = ref.lstrip("@")
+        for prefix in ("https://t.me/", "http://t.me/", "t.me/"):
+            if ref.startswith(prefix):
+                ref = ref[len(prefix):]
+                break
+        ref = ref.strip("/")
+
+        if not ref:
+            continue
+
+        try:
+            was_added = await db.add_source(ref)
+            if was_added:
+                # Автоподписка
+                join_msg = ""
+                if _monitor and _monitor._authorized:
+                    join_msg = await _monitor.join_source(ref)
+                added.append(ref)
+            else:
+                skipped.append(ref)
+        except Exception as e:
+            errors.append(f"{ref}: {e}")
+
+    # Отчёт
+    parts = [f"📋 <b>Массовое добавление: итоги</b>\n"]
+    if added:
+        parts.append(f"✅ Добавлено: {len(added)}")
+        # Показываем первые 20 для краткости
+        for r in added[:20]:
+            parts.append(f"  • <code>{r}</code>")
+        if len(added) > 20:
+            parts.append(f"  ... и ещё {len(added) - 20}")
+    if skipped:
+        parts.append(f"\n⏭ Уже были: {len(skipped)}")
+    if errors:
+        parts.append(f"\n❌ Ошибки: {len(errors)}")
+        for e in errors[:5]:
+            parts.append(f"  • {e}")
+
+    await message.answer("\n".join(parts), parse_mode="HTML")
 
 
 @router.message(Command("del_source"))

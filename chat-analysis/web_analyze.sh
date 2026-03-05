@@ -1,0 +1,93 @@
+#!/bin/bash
+# Быстрый анализ публичных чатов через t.me/s/ preview
+CHATS=(
+    samozanyatosti
+    webacadem_chat
+    world_360
+    rueventjob4at
+    freelance_work
+    freelance_vacancii
+    vakanssii
+    rabota_esttt
+    frilanc_topchat
+    freelance_dvig
+    frilanc_chat
+    bisneskontakt
+    pritulaacademy
+    infobiznes_vakansii
+    frilanceforpeople
+    dren_ro_2020
+    vpsmm_marketing
+    na_frilance
+    easy_fr_cht
+    diworkchat
+    rabotadoma_24chat
+    rabotavakansij
+    freelance_ads_group
+    freeassistant
+    rabota_podrabotka_frilanserom
+    infobiz_rich
+    business_group2
+    getinfobiz
+    pro_vakansi
+    infobizzer
+    infobiz_choogl
+    mari_vakansii
+    avitobust
+    btvns
+    freelance_in_telegram
+    ydalenna800
+    smmvakancii
+    udalenka_chatik
+    freelance_vakansiii
+    ggfreelancechat
+    avitochatkosms
+    jcenterschat
+    freelansersp
+    chat_freelanc
+    infobiz_vakansii
+    yourfreelancework
+    birzhha
+    frilans_chat_udalonka_na_domu
+    bakansii
+    freelancervchate
+    info_biz_ivent
+    frilanc
+    zakazyivakansii
+    freelance_birzha
+    chatik1termatrirosova
+    bomba_freelance
+    kuznicakadry
+    frilansinet
+    beaverbiz_freelance
+    wolf_vakansii
+    ksh_freelance
+    reklamafree007
+    tofind_pro
+    workwowinfo
+    jobfl_chat
+    newfrelans
+    itjobonline
+    rabota_v_setii
+    chat_frilansa
+    freeelanceeers
+    eazy_freelance
+    freelance_access
+    workffreelance
+    freevacations_chat
+    freelancevpsmm
+    frilansbirzha
+    richlance_chat
+    chatfreelanc
+    free_chat_for_freelance
+    worknomer1
+    allinfobiz
+    profiwork
+    rabota_emik
+)
+
+for chat in "${CHATS[@]}"; do
+    echo "=== $chat ==="
+    curl -sL "https://t.me/s/$chat" 2>/dev/null | sed 's/<[^>]*>//g' | grep -i -E "(ищу|нужен|нужна|вакансия|требуется|оплата|удалённ|фриланс)" | head -5
+    echo "---"
+done
