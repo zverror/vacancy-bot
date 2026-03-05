@@ -95,6 +95,7 @@ async def main():
     finally:
         reminder_task.cancel()
         sub_check_task.cancel()
+        await monitor.stop()
         if webhook_runner:
             await webhook_runner.cleanup()
         await monitor.stop()
