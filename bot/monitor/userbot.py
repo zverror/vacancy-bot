@@ -65,6 +65,8 @@ class VacancyMonitor:
                 me = await self.client.get_me()
                 logger.info(f"Pyrogram: сессия активна, user={me.first_name} ({me.phone_number})")
                 self._authorized = True
+                # Запускаем диспетчер обновлений — без этого on_message не работает
+                await self._start_dispatcher()
                 await self._setup_monitoring()
             except Exception:
                 logger.info("Pyrogram: сессия невалидна, требуется авторизация")
@@ -72,6 +74,28 @@ class VacancyMonitor:
         else:
             logger.info("Pyrogram: требуется авторизация")
             await self._request_auth_code()
+
+    async def _start_dispatcher(self):
+        """Запуск диспетчера обновлений Pyrogram.
+
+        client.connect() устанавливает MTProto-соединение, но НЕ запускает
+        обработку входящих обновлений. Без initialize() хэндлеры on_message
+        никогда не сработают. initialize() запускает dispatcher.
+        """
+        try:
+            if not self.client.is_initialized:
+                await self.client.initialize()
+                logger.info("Pyrogram dispatcher запущен (initialize)")
+            else:
+                logger.info("Pyrogram dispatcher уже запущен")
+        except Exception as e:
+            logger.error(f"Ошибка запуска dispatcher: {e}", exc_info=True)
+            # Пробуем запустить только dispatcher напрямую
+            try:
+                await self.client.dispatcher.start()
+                logger.info("Pyrogram dispatcher запущен (direct)")
+            except Exception as e2:
+                logger.error(f"Не удалось запустить dispatcher: {e2}", exc_info=True)
 
     async def _request_auth_code(self):
         """Запрашиваем код авторизации"""
@@ -120,6 +144,7 @@ class VacancyMonitor:
             await self.client.sign_in(PHONE, self._phone_code_hash, code)
             self._authorized = True
             logger.info("Pyrogram: авторизация успешна!")
+            await self._start_dispatcher()
             await self._setup_monitoring()
             return "✅ Авторизация успешна! Мониторинг запущен."
 
@@ -147,6 +172,7 @@ class VacancyMonitor:
             await self.client.check_password(password)
             self._authorized = True
             logger.info("Pyrogram: 2FA авторизация успешна!")
+            await self._start_dispatcher()
             await self._setup_monitoring()
             return "✅ Авторизация с 2FA успешна! Мониторинг запущен."
 
@@ -351,7 +377,11 @@ class VacancyMonitor:
             if not text:
                 return
 
+            chat_name = message.chat.username or str(message.chat.id)
+            logger.info(f"[MSG] Получено из {chat_name}: {text[:80]}...")
+
             if not is_vacancy(text):
+                logger.debug(f"[MSG] Не вакансия: {text[:60]}...")
                 return
 
             professions = classify_vacancy(text)
