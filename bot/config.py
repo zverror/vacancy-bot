@@ -18,13 +18,9 @@ YUKASSA_SECRET_KEY = os.getenv("YUKASSA_SECRET_KEY", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DB_PATH = os.getenv("DB_PATH", "data/bot.db")
 
-# Чаты-источники вакансий (username или invite-ссылка)
-SOURCE_CHATS = [
-    "profiwork",
-    "rabota_emik",
-    "mari_vakansii",
-    "+R_KxUQG5hYo5ZjAy",
-]
+# Чаты-источники: управляются только через /add_source и /del_source
+# Дефолтный список пуст — админ сам добавляет нужные группы
+SOURCE_CHATS = []
 
 # Профессии и ключевые слова для классификации
 # Основано на анализе 578 сообщений из 3 чатов (05.03.2026)
