@@ -246,6 +246,7 @@ class VacancyMonitor:
         try:
             chat = await self.client.join_chat(chat_ref)
             self._resolved_chats[chat_ref] = chat.id
+            await self._archive_and_mute(chat.id, chat_ref)
             logger.info(f"[RESOLVE] {chat_ref}: подписались (id={chat.id})")
         except UserAlreadyParticipant:
             try:
@@ -272,6 +273,37 @@ class VacancyMonitor:
         await self._setup_sources()
         return f"✅ Переподключено чатов: {len(self._resolved_chats)}"
 
+    async def _archive_and_mute(self, chat_id: int, chat_ref: str):
+        """Архивировать чат и отключить уведомления, чтобы не мешал владельцу аккаунта."""
+        try:
+            from pyrogram.raw.functions.folders import EditPeerFolders
+            from pyrogram.raw.types import InputFolderPeer
+            peer = await self.client.resolve_peer(chat_id)
+            await self.client.invoke(
+                EditPeerFolders(
+                    folder_peers=[InputFolderPeer(peer=peer, folder_id=1)]  # 1 = Archive
+                )
+            )
+            logger.info(f"[ARCHIVE] {chat_ref}: отправлен в архив")
+        except Exception as e:
+            logger.warning(f"[ARCHIVE] {chat_ref}: ошибка архивации: {e}")
+
+        try:
+            from pyrogram.raw.functions.account import UpdateNotifySettings
+            from pyrogram.raw.types import InputNotifyPeer, InputPeerNotifySettings
+            peer = await self.client.resolve_peer(chat_id)
+            await self.client.invoke(
+                UpdateNotifySettings(
+                    peer=InputNotifyPeer(peer=peer),
+                    settings=InputPeerNotifySettings(
+                        mute_until=2147483647  # max int32 = мут навсегда
+                    )
+                )
+            )
+            logger.info(f"[MUTE] {chat_ref}: уведомления отключены")
+        except Exception as e:
+            logger.warning(f"[MUTE] {chat_ref}: ошибка мута: {e}")
+
     async def join_source(self, chat_ref: str) -> str:
         """Подписаться на новый источник."""
         if not self._authorized:
@@ -286,13 +318,17 @@ class VacancyMonitor:
                     break
             except Exception:
                 pass
+            # Архивируем и мутим — чтобы не мешало владельцу аккаунта
+            await self._archive_and_mute(chat.id, chat_ref)
             logger.info(f"[JOIN] {chat_ref}: подписались (id={chat.id})")
-            return f"✅ Подписались на {chat_ref}"
+            return f"✅ Подписались на {chat_ref} (📦 в архив, 🔇 без уведомлений)"
         except UserAlreadyParticipant:
             try:
                 chat = await self.client.get_chat(chat_ref)
                 self._resolved_chats[chat_ref] = chat.id
-                return f"✅ Уже подписаны на {chat_ref}"
+                # Тоже архивируем на случай если раньше не было
+                await self._archive_and_mute(chat.id, chat_ref)
+                return f"✅ Уже подписаны на {chat_ref} (📦 в архив)"
             except Exception as e:
                 return f"⚠️ Уже подписаны, ошибка резолва: {e}"
         except (InviteHashExpired, InviteHashInvalid):
@@ -340,8 +376,9 @@ class VacancyMonitor:
         try:
             chat = await self.client.join_chat(chat_ref)
             self._resolved_chats[chat_ref] = chat.id
+            await self._archive_and_mute(chat.id, chat_ref)
             logger.info(f"[AUTO-JOIN] {chat_ref}: подписались (id={chat.id})")
-            await self._notify_admins(f"🔄 Авто-подписка на <code>{chat_ref}</code>")
+            await self._notify_admins(f"🔄 Авто-подписка на <code>{chat_ref}</code> (📦🔇)")
         except UserAlreadyParticipant:
             try:
                 chat = await self.client.get_chat(chat_ref)
