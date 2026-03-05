@@ -47,8 +47,8 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
-    # Регистрация команд меню
-    from aiogram.types import BotCommand
+    # Регистрация команд меню (сворачиваемое)
+    from aiogram.types import BotCommand, MenuButtonCommands
     await bot.set_my_commands([
         BotCommand(command="start", description="Начало работы"),
         BotCommand(command="profile", description="Профиль и подписка"),
@@ -56,6 +56,8 @@ async def main():
         BotCommand(command="subscribe", description="Оформить подписку"),
         BotCommand(command="help", description="Инструкция"),
     ])
+    # Сворачиваемая кнопка меню (Menu → показать/скрыть)
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
     dp = Dispatcher()
     dp.include_router(start.router)
