@@ -41,12 +41,9 @@ async def init_db():
             text TEXT NOT NULL,
             professions TEXT NOT NULL,
             link TEXT,
-            text_hash TEXT,
             created_at REAL NOT NULL,
             UNIQUE(source_chat, message_id)
         );
-
-        CREATE INDEX IF NOT EXISTS idx_vacancies_text_hash ON vacancies(text_hash);
 
         CREATE TABLE IF NOT EXISTS sent_vacancies (
             user_id INTEGER NOT NULL,
@@ -75,6 +72,16 @@ async def init_db():
             value TEXT NOT NULL
         );
     """)
+    await db.commit()
+
+    # Миграция: добавляем text_hash если колонки нет
+    try:
+        await db.execute("SELECT text_hash FROM vacancies LIMIT 1")
+    except Exception:
+        await db.execute("ALTER TABLE vacancies ADD COLUMN text_hash TEXT")
+        await db.commit()
+
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_text_hash ON vacancies(text_hash)")
     await db.commit()
     await db.close()
 
