@@ -83,6 +83,18 @@ async def init_db():
 
     await db.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_text_hash ON vacancies(text_hash)")
     await db.commit()
+
+    # Таблица отправленных вакансий (дедупликация по пользователю)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS sent_vacancies (
+            user_id INTEGER NOT NULL,
+            vacancy_id INTEGER NOT NULL,
+            sent_at REAL NOT NULL,
+            PRIMARY KEY (user_id, vacancy_id)
+        )
+    """)
+    await db.execute("CREATE INDEX IF NOT EXISTS idx_sent_vacancies_user ON sent_vacancies(user_id)")
+    await db.commit()
     await db.close()
 
 
@@ -237,6 +249,18 @@ async def mark_vacancy_sent(user_id: int, vacancy_id: int):
     )
     await db.commit()
     await db.close()
+
+
+async def was_vacancy_sent(user_id: int, vacancy_id: int) -> bool:
+    """Проверяет, отправлялась ли эта вакансия этому пользователю."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM sent_vacancies WHERE user_id = ? AND vacancy_id = ? LIMIT 1",
+        (user_id, vacancy_id)
+    )
+    row = await cursor.fetchone()
+    await db.close()
+    return row is not None
 
 
 async def get_recent_vacancies(limit: int = 10) -> list[dict]:

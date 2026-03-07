@@ -474,6 +474,10 @@ class VacancyMonitor:
     async def _send_vacancy_to_user(self, uid: int, vacancy_id: int,
                                      msg_text: str, keyboard) -> bool:
         try:
+            # Проверяем, не отправляли ли уже эту вакансию этому пользователю
+            if await db.was_vacancy_sent(uid, vacancy_id):
+                logger.info(f"[SEND] #{vacancy_id} → {uid}: ПРОПУСК (уже отправлено)")
+                return False
             await self.bot.send_message(
                 uid, msg_text, parse_mode="HTML",
                 reply_markup=keyboard,
