@@ -41,8 +41,9 @@ def is_vacancy(text: str) -> bool:
     text_lower = text.lower()
 
     # Антиспам — если совпало, это НЕ вакансия
+    # re.DOTALL чтобы .* ловил переносы строк
     for pattern in SPAM_SIGNALS:
-        if re.search(pattern, text_lower):
+        if re.search(pattern, text_lower, re.DOTALL):
             return False
 
     # Позитивные сигналы
